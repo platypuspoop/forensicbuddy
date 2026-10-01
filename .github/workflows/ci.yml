@@ -26,4 +26,4 @@ jobs:
           SECRET_KEY: ci-test-secret
           BOOTSTRAP_ADMIN_PASSWORD: CI-only-password-123!
           EVIDENCE_FERNET_KEY: ""
-        run: pytest -q
+        run: python -m pytest -q
