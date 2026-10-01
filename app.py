@@ -187,6 +187,7 @@ BASE_TEMPLATE = """
     <a href="{{ url_for('dashboard') }}">Cases</a>
     <a href="{{ url_for('audit') }}">Audit</a>
     {% if session.get('role') == 'admin' %}<a href="{{ url_for('users') }}">Users</a>{% endif %}
+    <a href="{{ url_for('change_password') }}">Password</a>
     <a href="{{ url_for('logout') }}">Sign out</a>
   </nav>
   {% endif %}
@@ -298,6 +299,28 @@ def audit_event(action, object_type=None, object_id=None, detail=None):
                 object_type, payload["object_id"], payload["detail"], previous_hash, record_hash
             ),
         )
+
+def verify_audit_chain():
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
+    previous_hash = ""
+    for row in rows:
+        payload = {
+            "event_time": row["event_time"],
+            "user_id": row["user_id"],
+            "username": row["username"],
+            "action": row["action"],
+            "object_type": row["object_type"],
+            "object_id": row["object_id"],
+            "detail": row["detail"] or "",
+            "previous_hash": previous_hash,
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        expected = hashlib.sha256(canonical.encode()).hexdigest()
+        if row["previous_hash"] != previous_hash or not secrets.compare_digest(expected, row["record_hash"]):
+            return False, row["id"]
+        previous_hash = row["record_hash"]
+    return True, None
 
 def get_case(case_id):
     with db() as conn:
@@ -552,6 +575,38 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+@app.route("/password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "POST":
+        current = request.form.get("current_password", "")
+        new = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        with db() as conn:
+            user = conn.execute("SELECT * FROM users WHERE id=?", (session["user_id"],)).fetchone()
+        if not user or not check_password_hash(user["password_hash"], current):
+            flash("Current password is incorrect.")
+        elif len(new) < 12:
+            flash("New password must be at least 12 characters.")
+        elif new != confirm:
+            flash("New passwords do not match.")
+        else:
+            with db() as conn:
+                conn.execute("UPDATE users SET password_hash=? WHERE id=?", (generate_password_hash(new), session["user_id"]))
+            audit_event("PASSWORD_CHANGED", "user", session["user_id"])
+            flash("Password changed.")
+            return redirect(url_for("dashboard"))
+    return page("Change password", """
+    <h1>Change password</h1><div class="card" style="max-width:600px">
+    <form method="post">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <label>Current password</label><input type="password" name="current_password" required>
+      <label style="margin-top:12px">New password</label><input type="password" name="new_password" minlength="12" required>
+      <label style="margin-top:12px">Confirm new password</label><input type="password" name="confirm_password" minlength="12" required>
+      <div style="margin-top:12px"><button>Change password</button></div>
+    </form></div>
+    """)
+
 @app.route("/")
 @login_required
 def dashboard():
@@ -563,6 +618,7 @@ def dashboard():
                FROM cases c JOIN users u ON u.id=c.created_by ORDER BY c.updated_at DESC"""
         ).fetchall()
     return page("Cases", """
+    {% if not cipher_enabled %}<div class="flash"><strong>Security warning:</strong> EVIDENCE_FERNET_KEY is not configured. Evidence files are being stored without application-layer encryption.</div>{% endif %}
     <div class="actions" style="justify-content:space-between">
       <h1>Investigation Cases</h1>
       {% if session.get('role') in ['admin','investigator'] %}<a class="btn" href="{{ url_for('new_case') }}">New case</a>{% endif %}
@@ -578,7 +634,7 @@ def dashboard():
       </tr>
     {% else %}<tr><td colspan="7">No cases yet.</td></tr>{% endfor %}
     </tbody></table></div>
-    """, cases=cases)
+    """, cases=cases, cipher_enabled=bool(cipher))
 
 @app.route("/cases/new", methods=["GET", "POST"])
 @roles_required("admin", "investigator")
@@ -724,7 +780,7 @@ def evidence_detail(evidence_id):
         custody = conn.execute("SELECT * FROM custody_events WHERE evidence_id=? ORDER BY id", (evidence_id,)).fetchall()
     return page(e["evidence_number"], """
     <div class="actions"><a class="btn secondary" href="{{ url_for('case_detail', case_id=e.case_id) }}">Back to case</a>
-    {% if session.get('role') in ['admin','investigator'] %}<form method="post" action="{{ url_for('verify_evidence', evidence_id=e.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button>Verify hash</button></form>{% endif %}</div>
+    {% if session.get('role') in ['admin','investigator'] %}<a class="btn secondary" href="{{ url_for('download_evidence', evidence_id=e.id) }}">Download original</a><form method="post" action="{{ url_for('verify_evidence', evidence_id=e.id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button>Verify hash</button></form>{% endif %}</div>
     <div class="card"><h1>{{ e.evidence_number }} - {{ e.original_filename }}</h1>
     <div class="grid">
       <div><strong>SHA-256</strong><div class="small">{{ e.sha256 }}</div></div>
@@ -739,6 +795,33 @@ def evidence_detail(evidence_id):
     {% for c in custody %}<tr><td class="small">{{ c.event_time }}</td><td>{{ c.action }}</td><td>{{ c.actor }}</td><td>{{ c.detail }}</td></tr>{% endfor %}
     </tbody></table></div>
     """, e=e, custody=custody)
+
+@app.get("/evidence/<int:evidence_id>/download")
+@roles_required("admin", "investigator")
+def download_evidence(evidence_id):
+    with db() as conn:
+        e = conn.execute("SELECT * FROM evidence WHERE id=?", (evidence_id,)).fetchone()
+    if not e:
+        abort(404)
+    try:
+        data = read_evidence(e["stored_filename"], e["encrypted"])
+    except (RuntimeError, InvalidToken, OSError) as exc:
+        abort(500, str(exc))
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO custody_events(evidence_id,action,actor,detail,event_time) VALUES(?,?,?,?,?)",
+            (evidence_id, "ACCESSED", session.get("username"), "Original evidence downloaded", now()),
+        )
+    audit_event("EVIDENCE_DOWNLOADED", "evidence", evidence_id, e["original_filename"])
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", e["original_filename"]) or f"evidence-{evidence_id}.bin"
+    return Response(
+        data,
+        mimetype=e["media_type"] or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 @app.post("/evidence/<int:evidence_id>/verify")
 @roles_required("admin", "investigator")
@@ -893,12 +976,15 @@ def report_download(case_id):
 def audit():
     with db() as conn:
         rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 500").fetchall()
+    chain_ok, bad_id = verify_audit_chain()
     return page("Audit log", """
-    <h1>Application audit log</h1><div class="card small">Records are hash-chained: each audit record includes the previous record hash in the material used to calculate its own SHA-256 hash.</div>
+    <h1>Application audit log</h1>
+    <div class="card"><strong>Audit chain:</strong> {% if chain_ok %}VALID{% else %}INVALID at record {{ bad_id }}{% endif %}</div>
+    <div class="card small">Records are hash-chained: each audit record includes the previous record hash in the material used to calculate its own SHA-256 hash.</div>
     <div class="card"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Object</th><th>Detail</th><th>Record hash</th></tr></thead><tbody>
     {% for r in rows %}<tr><td class="small">{{ r.event_time }}</td><td>{{ r.username or 'anonymous' }}</td><td>{{ r.action }}</td><td>{{ r.object_type or '' }} {{ r.object_id or '' }}</td><td>{{ r.detail }}</td><td class="small">{{ r.record_hash }}</td></tr>{% endfor %}
     </tbody></table></div>
-    """, rows=rows)
+    """, rows=rows, chain_ok=chain_ok, bad_id=bad_id)
 
 @app.route("/users", methods=["GET", "POST"])
 @roles_required("admin")
