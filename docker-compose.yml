@@ -1,0 +1,13 @@
+services:
+  forensicbuddy:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - forensicbuddy_data:/app/instance
+
+volumes:
+  forensicbuddy_data:
