@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ForensicBuddy Prototype</title>
+<style>
+:root{--bg:#f4f6f8;--panel:#fff;--ink:#17202a;--muted:#667085;--line:#d7dde5;--dark:#111827;--warn:#fff4cc}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--dark);color:#fff;padding:14px 22px;display:flex;justify-content:space-between;align-items:center}
+main{max-width:1400px;margin:20px auto;padding:0 18px 40px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+label{display:block;font-size:12px;font-weight:700;margin-bottom:5px}
+input,textarea,select{width:100%;padding:9px;border:1px solid #b8c0cc;border-radius:5px;background:#fff}
+textarea{min-height:100px;resize:vertical}
+button,.btn{background:#1f2937;color:#fff;border:0;border-radius:5px;padding:9px 12px;cursor:pointer;text-decoration:none;display:inline-block}
+button.secondary,.btn.secondary{background:#475467}button.danger{background:#7f1d1d}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse;background:#fff}th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}th{background:#eef1f5}
+.small{font-size:12px;color:var(--muted)}.warn{background:var(--warn);border:1px solid #e4c75f;padding:10px;border-radius:5px;margin-bottom:14px}
+.hidden{display:none}.tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}.tabs button.active{background:#000}
+pre{white-space:pre-wrap;word-break:break-word;background:#f8fafc;border:1px solid var(--line);padding:12px;border-radius:5px}
+.badge{display:inline-block;padding:2px 7px;border-radius:12px;background:#e7ecf2;font-size:12px}
+h1,h2,h3{margin-top:0}
+</style>
+</head>
+<body>
+<header>
+  <div><strong>ForensicBuddy</strong> <span class="small" style="color:#d1d5db">Browser Prototype</span></div>
+  <div class="small" style="color:#d1d5db">Local browser storage only</div>
+</header>
+<main>
+<div class="warn"><strong>Prototype only:</strong> Do not use real ePHI, production evidence, credentials, or sensitive case data here. This browser version stores data in localStorage and is intended only for rapid UI/workflow prototyping.</div>
+
+<div class="tabs">
+  <button data-tab="cases" class="active">Cases</button>
+  <button data-tab="evidence">Evidence</button>
+  <button data-tab="findings">Findings</button>
+  <button data-tab="timeline">Timeline</button>
+  <button data-tab="report">Report</button>
+</div>
+
+<section id="tab-cases">
+  <div class="actions" style="justify-content:space-between">
+    <h1>Cases</h1>
+    <button id="newCaseBtn">New case</button>
+  </div>
+  <div id="caseEditor" class="card hidden">
+    <h2 id="caseEditorTitle">New case</h2>
+    <div class="grid">
+      <div><label>Case number</label><input id="caseNumber" placeholder="IR-2026-001"></div>
+      <div><label>Title</label><input id="caseTitle"></div>
+      <div><label>Classification</label><select id="caseClassification"><option>Sensitive</option><option>ePHI</option><option>Confidential</option><option>Public</option></select></div>
+      <div><label>Lead investigator</label><input id="caseLead"></div>
+    </div>
+    <label style="margin-top:10px">Scope / description</label><textarea id="caseDescription"></textarea>
+    <div class="actions"><button id="saveCaseBtn">Save case</button><button class="secondary" id="cancelCaseBtn">Cancel</button></div>
+  </div>
+  <div class="card"><table><thead><tr><th>Case</th><th>Title</th><th>Status</th><th>Classification</th><th>Evidence</th><th>Findings</th><th></th></tr></thead><tbody id="casesBody"></tbody></table></div>
+</section>
+
+<section id="tab-evidence" class="hidden">
+  <div class="actions" style="justify-content:space-between"><h1>Evidence</h1><button id="addEvidenceBtn">Add evidence</button></div>
+  <div id="evidenceEditor" class="card hidden">
+    <h2>Add evidence</h2>
+    <div class="grid">
+      <div><label>Case</label><select id="evidenceCase"></select></div>
+      <div><label>Evidence number</label><input id="evidenceNumber" placeholder="E-0001"></div>
+      <div><label>File</label><input id="evidenceFile" type="file"></div>
+      <div><label>Source tool</label><input id="evidenceTool" placeholder="Zeek, tshark, KAPE, XSIAM..."></div>
+      <div><label>Source system</label><input id="evidenceSystem"></div>
+      <div><label>Collector</label><input id="evidenceCollector"></div>
+    </div>
+    <label style="margin-top:10px">Notes</label><textarea id="evidenceNotes"></textarea>
+    <div class="actions"><button id="saveEvidenceBtn">Ingest</button><button class="secondary" id="cancelEvidenceBtn">Cancel</button></div>
+  </div>
+  <div class="card"><table><thead><tr><th>Case</th><th>ID</th><th>File</th><th>Source</th><th>SHA-256</th><th>Parser</th><th>Records</th></tr></thead><tbody id="evidenceBody"></tbody></table></div>
+</section>
+
+<section id="tab-findings" class="hidden">
+  <div class="actions" style="justify-content:space-between"><h1>Findings</h1><button id="addFindingBtn">Add finding</button></div>
+  <div id="findingEditor" class="card hidden">
+    <div class="grid">
+      <div><label>Case</label><select id="findingCase"></select></div>
+      <div><label>Title</label><input id="findingTitle"></div>
+      <div><label>Severity</label><select id="findingSeverity"><option>Informational</option><option>Low</option><option>Moderate</option><option>High</option><option>Critical</option></select></div>
+      <div><label>Confidence</label><select id="findingConfidence"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+      <div><label>Evidence refs</label><input id="findingEvidenceRefs" placeholder="E-0001, E-0002"></div>
+    </div>
+    <label style="margin-top:10px">Description / analysis</label><textarea id="findingDescription"></textarea>
+    <label>Impact</label><textarea id="findingImpact"></textarea>
+    <label>Recommendation</label><textarea id="findingRecommendation"></textarea>
+    <div class="actions"><button id="saveFindingBtn">Save finding</button><button class="secondary" id="cancelFindingBtn">Cancel</button></div>
+  </div>
+  <div class="card"><table><thead><tr><th>Case</th><th>Severity</th><th>Finding</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody id="findingsBody"></tbody></table></div>
+</section>
+
+<section id="tab-timeline" class="hidden">
+  <h1>Timeline</h1>
+  <div class="card"><div class="grid">
+    <div><label>Case filter</label><select id="timelineCaseFilter"></select></div>
+    <div><label>Search</label><input id="timelineSearch" placeholder="domain, IP, process, URL..."></div>
+  </div></div>
+  <div class="card"><table><thead><tr><th>Time</th><th>Case</th><th>Type</th><th>Source</th><th>Summary</th></tr></thead><tbody id="timelineBody"></tbody></table></div>
+</section>
+
+<section id="tab-report" class="hidden">
+  <div class="actions" style="justify-content:space-between"><h1>Report Builder</h1><div class="actions"><select id="reportCase"></select><button id="downloadReportBtn">Download Markdown</button></div></div>
+  <div class="card"><pre id="reportPreview">Select a case.</pre></div>
+</section>
+
+<div class="card small">
+  <div class="actions" style="justify-content:space-between">
+    <span>Prototype data stays in this browser only.</span>
+    <div class="actions"><button class="secondary" id="exportStateBtn">Export prototype JSON</button><button class="secondary" id="importStateBtn">Import prototype JSON</button><input type="file" id="importStateFile" accept=".json" class="hidden"><button class="danger" id="resetBtn">Reset prototype</button></div>
+  </div>
+</div>
+</main>
+
+<script>
+const KEY='forensicbuddyPrototypeV1';
+const state=load();
+let activeCaseId=state.cases[0]?.id||null;
+
+function load(){
+  try{return JSON.parse(localStorage.getItem(KEY))||{cases:[],evidence:[],findings:[],timeline:[]}}catch{return {cases:[],evidence:[],findings:[],timeline:[]}}
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(state));renderAll()}
+function id(){return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)+Math.random().toString(36).slice(2)}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function now(){return new Date().toISOString()}
+function caseById(x){return state.cases.find(c=>c.id===x)}
+function countEvidence(cid){return state.evidence.filter(e=>e.caseId===cid).length}
+function countFindings(cid){return state.findings.filter(f=>f.caseId===cid).length}
+
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden'));
+  document.getElementById('tab-'+b.dataset.tab).classList.remove('hidden');
+  if(b.dataset.tab==='report') renderReport();
+  if(b.dataset.tab==='timeline') renderTimeline();
+});
+
+function renderCaseOptions(){
+  const options=['<option value="">Select case</option>',...state.cases.map(c=>'<option value="'+c.id+'">'+esc(c.caseNumber)+' - '+esc(c.title)+'</option>')].join('');
+  ['evidenceCase','findingCase','timelineCaseFilter','reportCase'].forEach(x=>document.getElementById(x).innerHTML=options);
+  if(activeCaseId){
+    ['evidenceCase','findingCase','reportCase'].forEach(x=>document.getElementById(x).value=activeCaseId);
+  }
+}
+function renderCases(){
+  const b=document.getElementById('casesBody');
+  b.innerHTML=state.cases.map(c=>`<tr><td><strong>${esc(c.caseNumber)}</strong></td><td>${esc(c.title)}</td><td><span class="badge">${esc(c.status)}</span></td><td>${esc(c.classification)}</td><td>${countEvidence(c.id)}</td><td>${countFindings(c.id)}</td><td><button class="secondary" onclick="selectCase('${c.id}')">Use</button></td></tr>`).join('')||'<tr><td colspan="7">No cases yet.</td></tr>';
+}
+window.selectCase=(cid)=>{activeCaseId=cid;renderCaseOptions();document.querySelector('[data-tab="evidence"]').click()}
+document.getElementById('newCaseBtn').onclick=()=>document.getElementById('caseEditor').classList.remove('hidden');
+document.getElementById('cancelCaseBtn').onclick=()=>document.getElementById('caseEditor').classList.add('hidden');
+document.getElementById('saveCaseBtn').onclick=()=>{
+  const num=document.getElementById('caseNumber').value.trim(), title=document.getElementById('caseTitle').value.trim();
+  if(!num||!title)return alert('Case number and title are required.');
+  if(state.cases.some(c=>c.caseNumber===num))return alert('That case number already exists.');
+  const c={id:id(),caseNumber:num,title,classification:document.getElementById('caseClassification').value,lead:document.getElementById('caseLead').value.trim(),description:document.getElementById('caseDescription').value.trim(),status:'Open',createdAt:now()};
+  state.cases.push(c);activeCaseId=c.id;
+  ['caseNumber','caseTitle','caseLead','caseDescription'].forEach(x=>document.getElementById(x).value='');
+  document.getElementById('caseEditor').classList.add('hidden');save()
+};
+
+async function sha256(file){
+  const buf=await file.arrayBuffer(), hash=await crypto.subtle.digest('SHA-256',buf);
+  return [...new Uint8Array(hash)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function parseCSV(text){
+  const lines=text.split(/\r?\n/).filter(Boolean); if(lines.length<2)return [];
+  const split=l=>{const out=[];let cur='',q=false;for(let i=0;i<l.length;i++){const ch=l[i];if(ch==='"'){if(q&&l[i+1]==='"'){cur+='"';i++}else q=!q}else if(ch===','&&!q){out.push(cur);cur=''}else cur+=ch}out.push(cur);return out};
+  const h=split(lines[0]); return lines.slice(1).map(l=>{const v=split(l),o={};h.forEach((k,i)=>o[k]=v[i]??'');return o});
+}
+function parseZeekTSV(text){
+  const lines=text.split(/\r?\n/);let fields=null,out=[];
+  for(const line of lines){if(line.startsWith('#fields'))fields=line.split('\t').slice(1);else if(!line.startsWith('#')&&line.trim()&&fields){const v=line.split('\t');const o={};fields.forEach((k,i)=>o[k]=v[i]??'');out.push(o)}}
+  return out;
+}
+function parseSquid(text){
+  return text.split(/\r?\n/).filter(l=>l.trim()&&!l.startsWith('#')).map(l=>{const p=l.trim().split(/\s+/);return p.length>=7?{timestamp:p[0],elapsed_ms:p[1],client_ip:p[2],result_code:p[3],bytes:p[4],method:p[5],url:p[6],user:p[7]||'',hierarchy:p[8]||'',content_type:p[9]||''}:null}).filter(Boolean)
+}
+function parseJSON(text){
+  try{const o=JSON.parse(text);return Array.isArray(o)?o.filter(x=>x&&typeof x==='object'):[o]}catch{}
+  return text.split(/\r?\n/).map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(x=>x&&typeof x==='object')
+}
+function bestTime(r){
+  for(const k of ['ts','timestamp','time','datetime','date_time','event_time','@timestamp','TimeGenerated','Timestamp','CreationTime','LastModified','StartTime']){
+    if(r[k]!==undefined&&r[k]!==''){const v=String(r[k]);if(/^\d{10}(\.\d+)?$/.test(v))return new Date(parseFloat(v)*1000).toISOString();const d=new Date(v);if(!isNaN(d))return d.toISOString();return v}
+  }return ''
+}
+function summary(r){
+  const keys=['summary','message','Message','query','url','uri','host','hostname','process_name','ProcessName','event_type','EventType','action','ActionType','name','Name'];
+  const parts=[];for(const k of keys){if(r[k]!==undefined&&r[k]!=='')parts.push(k+'='+r[k]);if(parts.length>=3)break}
+  if(!parts.length){for(const [k,v] of Object.entries(r).slice(0,4))if(v!==''&&v!=null)parts.push(k+'='+v)}
+  return parts.join(' | ').slice(0,1000)||'Parsed event'
+}
+async function parseFile(file){
+  const lower=file.name.toLowerCase(); let text='';
+  try{text=await file.text()}catch{return {parser:'Preserved only',records:[]}}
+  if(text.startsWith('#separator')||text.includes('#fields\t'))return {parser:'Zeek TSV',records:parseZeekTSV(text)}
+  if(lower.endsWith('.json')||lower.endsWith('.jsonl')||lower.endsWith('.ndjson')||/^[\s]*[\[{]/.test(text)){
+    const records=parseJSON(text); const zeek=records.slice(0,20).some(r=>r&&r.uid&&r.ts); return {parser:zeek?'Zeek JSON':'JSON/JSONL',records}
+  }
+  if(lower.includes('squid')||lower.includes('access.log'))return {parser:'Squid access.log',records:parseSquid(text)}
+  if(lower.endsWith('.csv'))return {parser:'CSV',records:parseCSV(text)}
+  if(lower.endsWith('.tsv')){const lines=text.split(/\r?\n/).filter(Boolean);if(lines.length){const h=lines[0].split('\t');return {parser:'TSV',records:lines.slice(1).map(l=>{const v=l.split('\t'),o={};h.forEach((k,i)=>o[k]=v[i]??'');return o})}}}
+  return {parser:'Generic text',records:text.split(/\r?\n/).filter(Boolean).slice(0,100000).map(line=>({line}))}
+}
+
+document.getElementById('addEvidenceBtn').onclick=()=>{if(!state.cases.length)return alert('Create a case first.');document.getElementById('evidenceEditor').classList.remove('hidden')}
+document.getElementById('cancelEvidenceBtn').onclick=()=>document.getElementById('evidenceEditor').classList.add('hidden');
+document.getElementById('saveEvidenceBtn').onclick=async()=>{
+  const caseId=document.getElementById('evidenceCase').value,file=document.getElementById('evidenceFile').files[0];
+  if(!caseId||!file)return alert('Select a case and file.');
+  let num=document.getElementById('evidenceNumber').value.trim();
+  if(!num)num='E-'+String(state.evidence.filter(e=>e.caseId===caseId).length+1).padStart(4,'0');
+  const hash=await sha256(file), parsed=await parseFile(file), eid=id();
+  state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.records.length,100000),createdAt:now()});
+  parsed.records.slice(0,100000).forEach(r=>state.timeline.push({id:id(),caseId,evidenceId:eid,time:bestTime(r),type:r.event_type||r.EventType||r._path||parsed.parser,source:r.source||r.host||r.hostname||r.Computer||'',summary:summary(r)}));
+  document.getElementById('evidenceEditor').classList.add('hidden');document.getElementById('evidenceFile').value='';save()
+};
+function renderEvidence(){
+  document.getElementById('evidenceBody').innerHTML=state.evidence.map(e=>`<tr><td>${esc(caseById(e.caseId)?.caseNumber||'')}</td><td>${esc(e.evidenceNumber)}</td><td>${esc(e.filename)}<div class="small">${e.size} bytes</div></td><td>${esc(e.sourceTool)}<div class="small">${esc(e.sourceSystem)}</div></td><td class="small">${esc(e.sha256)}</td><td>${esc(e.parser)}</td><td>${e.parsedRecords}</td></tr>`).join('')||'<tr><td colspan="7">No evidence.</td></tr>'
+}
+
+document.getElementById('addFindingBtn').onclick=()=>{if(!state.cases.length)return alert('Create a case first.');document.getElementById('findingEditor').classList.remove('hidden')}
+document.getElementById('cancelFindingBtn').onclick=()=>document.getElementById('findingEditor').classList.add('hidden');
+document.getElementById('saveFindingBtn').onclick=()=>{
+  const caseId=document.getElementById('findingCase').value,title=document.getElementById('findingTitle').value.trim(),description=document.getElementById('findingDescription').value.trim();
+  if(!caseId||!title||!description)return alert('Case, title, and description are required.');
+  state.findings.push({id:id(),caseId,title,severity:document.getElementById('findingSeverity').value,confidence:document.getElementById('findingConfidence').value,evidenceRefs:document.getElementById('findingEvidenceRefs').value.trim(),description,impact:document.getElementById('findingImpact').value.trim(),recommendation:document.getElementById('findingRecommendation').value.trim(),status:'Open',createdAt:now()});
+  document.getElementById('findingEditor').classList.add('hidden');save()
+};
+function renderFindings(){
+  document.getElementById('findingsBody').innerHTML=state.findings.map(f=>`<tr><td>${esc(caseById(f.caseId)?.caseNumber||'')}</td><td>${esc(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small">${esc(f.description.slice(0,220))}</div></td><td>${esc(f.confidence)}</td><td>${esc(f.evidenceRefs)}</td></tr>`).join('')||'<tr><td colspan="5">No findings.</td></tr>'
+}
+function renderTimeline(){
+  const cid=document.getElementById('timelineCaseFilter').value, q=document.getElementById('timelineSearch').value.toLowerCase();
+  const rows=state.timeline.filter(t=>(!cid||t.caseId===cid)&&(!q||JSON.stringify(t).toLowerCase().includes(q))).slice(0,2000);
+  document.getElementById('timelineBody').innerHTML=rows.map(t=>`<tr><td class="small">${esc(t.time||'Unknown')}</td><td>${esc(caseById(t.caseId)?.caseNumber||'')}</td><td>${esc(t.type)}</td><td>${esc(t.source)}</td><td>${esc(t.summary)}</td></tr>`).join('')||'<tr><td colspan="5">No matching timeline events.</td></tr>'
+}
+document.getElementById('timelineCaseFilter').onchange=renderTimeline;document.getElementById('timelineSearch').oninput=renderTimeline;
+
+function buildReport(cid){
+  const c=caseById(cid);if(!c)return 'Select a case.';
+  const ev=state.evidence.filter(e=>e.caseId===cid), fi=state.findings.filter(f=>f.caseId===cid), tl=state.timeline.filter(t=>t.caseId===cid).slice(0,1000);
+  const out=[`# Investigation Report - ${c.caseNumber}`,'',`**Title:** ${c.title}`,`**Classification:** ${c.classification}`,`**Status:** ${c.status}`,`**Lead Investigator:** ${c.lead||'Unassigned'}`,`**Generated:** ${now()}`,'','## Scope and Background','',c.description||'No scope narrative entered.','','## Evidence',''];
+  ev.forEach(e=>out.push(`### ${e.evidenceNumber} - ${e.filename}`,`- SHA-256: \`${e.sha256}\``,`- Size: ${e.size} bytes`,`- Source tool: ${e.sourceTool||'Not specified'}`,`- Source system: ${e.sourceSystem||'Not specified'}`,`- Collector: ${e.collector||'Not specified'}`,`- Parser: ${e.parser}`,`- Parsed records: ${e.parsedRecords}`,`- Notes: ${e.notes||''}`,''));
+  out.push('## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
+  out.push('## Timeline','','| Time | Type | Source | Summary |','|---|---|---|---|');tl.forEach(t=>out.push(`| ${t.time||'Unknown'} | ${String(t.type||'').replaceAll('|','\\|')} | ${String(t.source||'').replaceAll('|','\\|')} | ${String(t.summary||'').replaceAll('|','\\|')} |`));
+  out.push('','## Methodology and Integrity','','Evidence metadata includes SHA-256 hashes calculated in the browser over the original selected file bytes. In this prototype, the file itself is not persisted; only metadata and normalized records are stored in localStorage.','','## Limitations','','This browser build is for rapid prototyping only and is not a production evidence repository or HIPAA-compliant deployment.');
+  return out.join('\n')
+}
+function renderReport(){const cid=document.getElementById('reportCase').value||activeCaseId||'';document.getElementById('reportCase').value=cid;document.getElementById('reportPreview').textContent=buildReport(cid)}
+document.getElementById('reportCase').onchange=renderReport;
+document.getElementById('downloadReportBtn').onclick=()=>{const cid=document.getElementById('reportCase').value;if(!cid)return alert('Select a case.');const blob=new Blob([buildReport(cid)],{type:'text/markdown'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(caseById(cid)?.caseNumber||'forensicbuddy')+'_report.md';a.click();URL.revokeObjectURL(a.href)};
+
+document.getElementById('exportStateBtn').onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='forensicbuddy-prototype.json';a.click();URL.revokeObjectURL(a.href)};
+document.getElementById('importStateBtn').onclick=()=>document.getElementById('importStateFile').click();
+document.getElementById('importStateFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const x=JSON.parse(await f.text());if(!x.cases||!x.evidence||!x.findings||!x.timeline)throw new Error('Invalid format');Object.assign(state,x);activeCaseId=state.cases[0]?.id||null;save()}catch(err){alert('Import failed: '+err.message)}};
+document.getElementById('resetBtn').onclick=()=>{if(confirm('Erase all prototype data in this browser?')){localStorage.removeItem(KEY);location.reload()}};
+
+function renderAll(){renderCaseOptions();renderCases();renderEvidence();renderFindings();renderTimeline();renderReport()}
+renderAll();
+</script>
+</body>
+</html>
