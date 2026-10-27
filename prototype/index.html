@@ -114,6 +114,12 @@ h1,h2,h3{margin-top:0}
     <div class="actions"><button id="saveEvidenceBtn">Ingest</button><button class="secondary" id="cancelEvidenceBtn">Cancel</button></div>
   </div>
   <div class="card"><table><thead><tr><th>Case</th><th>ID</th><th>File</th><th>Source</th><th>SHA-256</th><th>Parser</th><th>Records</th></tr></thead><tbody id="evidenceBody"></tbody></table></div>
+  <h2>Selected Connection Evidence (derived)</h2>
+  <p class="connection-help">Analyst-selected summaries linked to the original evidence. These have unique child identifiers, but are not separate preserved files or independently hashed artifacts.</p>
+  <div class="card"><div class="connection-table-scroll"><table style="min-width:900px">
+    <thead><tr><th>Case</th><th>Derived reference</th><th>Original evidence</th><th>Observed connection</th><th>Rationale</th><th>Timeline</th></tr></thead>
+    <tbody id="derivedEvidenceBody"></tbody>
+  </table></div></div>
 </section>
 
 <section id="tab-connections" class="hidden">
@@ -393,6 +399,24 @@ document.getElementById('saveEvidenceBtn').onclick=async()=>{
     alert('Evidence was not saved. Browser storage may be full: '+err.message);
   }finally{saveButton.disabled=false}
 };
+function derivedReferenceFor(connection,evidence){
+  if(connection.derivedEvidenceNumber)return connection.derivedEvidenceNumber;
+  const siblings=state.connections.filter(c=>c.evidenceId===evidence.id&&c.promotedAt);
+  const position=Math.max(1,siblings.findIndex(c=>c.id===connection.id)+1);
+  return evidence.evidenceNumber+'-C'+String(position).padStart(4,'0');
+}
+function renderDerivedEvidence(){
+  document.getElementById('derivedEvidenceBody').innerHTML=state.connections
+    .filter(c=>c.promotedAt).sort((a,b)=>a.promotedAt.localeCompare(b.promotedAt))
+    .map(c=>{
+      const e=state.evidence.find(x=>x.id===c.evidenceId);
+      return '<tr><td>'+esc(caseById(c.caseId)?.caseNumber||'')+'</td>'+
+        '<td><strong>'+esc(derivedReferenceFor(c,e||{id:'',evidenceNumber:'Unknown'}))+'</strong></td>'+
+        '<td>'+esc(e?.evidenceNumber||'Unknown')+'<div class="small">'+esc(e?.filename||'')+'</div></td>'+
+        '<td class="small">'+esc(connectionDescription(c))+'</td>'+
+        '<td>'+esc(c.promotionNote||'Not specified')+'</td><td><span class="badge">Added</span></td></tr>';
+    }).join('')||'<tr><td colspan="6">No connections have been selected as derived evidence.</td></tr>';
+}
 function renderEvidence(){
   document.getElementById('evidenceBody').innerHTML=state.evidence.map(e=>{
     const legacy=legacyXlsxEvidence(e.caseId).some(x=>x.id===e.id);
@@ -523,12 +547,17 @@ document.getElementById('promoteConnectionsBtn').onclick=()=>{
   const originalTimeline=state.timeline.length,stamps=chosen.map(c=>c.promotedAt),time=now();
   for(const c of chosen){
     const e=state.evidence.find(item=>item.id===c.evidenceId);
+    const used=state.connections.filter(x=>x.evidenceId===c.evidenceId&&x.derivedEvidenceNumber)
+      .map(x=>Number(/-C(\d+)$/.exec(x.derivedEvidenceNumber)?.[1])||0);
+    const next=Math.max(0,...used)+1;
+    c.derivedEvidenceNumber=(e?.evidenceNumber||'E-UNKNOWN')+'-C'+String(next).padStart(4,'0');
     c.promotedAt=time;
     c.promotionNote=reason;
-    const summary='Selected connection: '+connectionDescription(c)+
+    const summary='Derived evidence: '+c.derivedEvidenceNumber+' | Selected connection: '+connectionDescription(c)+
       ' | Source evidence: '+(e?.evidenceNumber||'Unknown')+' ('+(e?.filename||'unknown')+')'+
       ' | SHA-256: '+(e?.sha256||'Unknown')+' | Analyst rationale: '+reason;
     state.timeline.push({id:id(),caseId:cid,evidenceId:c.evidenceId,connectionId:c.id,
+      derivedEvidenceNumber:c.derivedEvidenceNumber,
       time:c.firstSeen||'',type:'Selected connection',source:c.src,summary,
       createdAt:time,analystRationale:reason});
   }
@@ -538,7 +567,7 @@ document.getElementById('promoteConnectionsBtn').onclick=()=>{
     document.getElementById('connectionsStatus').textContent='Added '+chosen.length+' connection(s) to the case timeline.';
   }catch(err){
     state.timeline.length=originalTimeline;
-    chosen.forEach((c,i)=>{c.promotedAt=stamps[i];delete c.promotionNote});
+    chosen.forEach((c,i)=>{c.promotedAt=stamps[i];delete c.promotionNote;delete c.derivedEvidenceNumber});
     alert('Timeline update was not saved. Browser storage may be full: '+err.message);
   }
 };
@@ -603,8 +632,9 @@ function renderTimeline(){
     '<td class="case-id">'+esc(caseById(t.caseId)?.caseNumber||'')+'</td>'+
     '<td>'+esc(t.type)+'</td><td>'+esc(t.source)+'</td>'+
     '<td>'+timelineSummaryHTML(t)+'</td>'+
-    '<td class="small">'+esc(state.evidence.find(e=>e.id===t.evidenceId)?.evidenceNumber||'—')+
-    (t.connectionId?'<div class="badge">Selected connection</div>':'')+'</td></tr>'
+    '<td class="small">'+esc(t.derivedEvidenceNumber||
+      state.evidence.find(e=>e.id===t.evidenceId)?.evidenceNumber||'—')+
+    (t.connectionId?'<div class="badge">Derived connection</div>':'')+'</td></tr>'
   ).join('') || '<tr><td colspan="6">No readable timeline events. Import NetFlow/PCAP and select relevant connections in Connections Explorer to add them here.</td></tr>';
 }
 document.getElementById('timelineCaseFilter').onchange=renderTimeline;
@@ -714,7 +744,8 @@ function buildReport(cid){
   if(!selected.length)out.push('No connections have been selected for the timeline. The connection index is available in Connections Explorer.','');
   for(const conn of selected){
     const e=ev.find(item=>item.id===conn.evidenceId);
-    out.push('### '+(e?.evidenceNumber||'Unknown')+' — '+conn.protocol+' '+conn.src+' to '+conn.dst,
+    out.push('### '+derivedReferenceFor(conn,e||{id:'',evidenceNumber:'Unknown'})+' — '+conn.protocol+' '+conn.src+' to '+conn.dst,
+      '- Parent evidence number: '+(e?.evidenceNumber||'Unavailable'),
       '- Original evidence: '+(e?.filename||'Unavailable'),
       '- Original SHA-256: '+(e?.sha256||'Unavailable'),
       '- First observed (UTC): '+(conn.firstSeen||'Unknown'),
@@ -799,7 +830,7 @@ document.getElementById('importStateBtn').onclick=()=>document.getElementById('i
 document.getElementById('importStateFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const x=JSON.parse(await f.text());if(!x.cases||!x.evidence||!x.findings||!x.timeline)throw new Error('Invalid format');Object.assign(state,x);activeCaseId=state.cases[0]?.id||null;save()}catch(err){alert('Import failed: '+err.message)}};
 document.getElementById('resetBtn').onclick=()=>{if(confirm('Erase all prototype data in this browser?')){localStorage.removeItem(KEY);location.reload()}};
 
-function renderAll(){renderCaseOptions();renderCases();renderEvidence();renderFindings();renderConnections();renderTimeline();renderReport()}
+function renderAll(){renderCaseOptions();renderCases();renderEvidence();renderDerivedEvidence();renderFindings();renderConnections();renderTimeline();renderReport()}
 renderAll();
 </script>
 </body>
