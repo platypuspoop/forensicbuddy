@@ -118,6 +118,7 @@ h1,h2,h3{margin-top:0}
 </div>
 </main>
 
+<script src="xlsx.js"></script>
 <script>
 const KEY='forensicbuddyPrototypeV1';
 const state=load();
@@ -194,6 +195,7 @@ function bestTime(r){
   }return ''
 }
 function summary(r){
+  const flow=flowSummary(recordFacts(r));if(flow)return flow;
   const keys=['summary','message','Message','query','url','uri','host','hostname','process_name','ProcessName','event_type','EventType','action','ActionType','name','Name'];
   const parts=[];for(const k of keys){if(r[k]!==undefined&&r[k]!=='')parts.push(k+'='+r[k]);if(parts.length>=3)break}
   if(!parts.length){for(const [k,v] of Object.entries(r).slice(0,4))if(v!==''&&v!=null)parts.push(k+'='+v)}
@@ -201,6 +203,8 @@ function summary(r){
 }
 async function parseFile(file){
   const lower=file.name.toLowerCase(); let text='';
+  if(lower.endsWith('.xlsx'))return parseSpreadsheet(file);
+  if(/\.(xls|xlsm|xlsb|zip|pcap|pcapng|evtx|exe|dll|pdf)$/i.test(lower))return {parser:'Unsupported binary (metadata only)',records:[],warning:'Binary file not parsed. Export .xlsx or CSV for analysis.'};
   try{text=await file.text()}catch{return {parser:'Preserved only',records:[]}}
   if(text.startsWith('#separator')||text.includes('#fields\t'))return {parser:'Zeek TSV',records:parseZeekTSV(text)}
   if(lower.endsWith('.json')||lower.endsWith('.jsonl')||lower.endsWith('.ndjson')||/^[\s]*[\[{]/.test(text)){
@@ -219,10 +223,10 @@ document.getElementById('saveEvidenceBtn').onclick=async()=>{
   if(!caseId||!file)return alert('Select a case and file.');
   let num=document.getElementById('evidenceNumber').value.trim();
   if(!num)num='E-'+String(state.evidence.filter(e=>e.caseId===caseId).length+1).padStart(4,'0');
-  const hash=await sha256(file), parsed=await parseFile(file), eid=id();
-  state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.records.length,100000),createdAt:now()});
-  parsed.records.slice(0,100000).forEach(r=>state.timeline.push({id:id(),caseId,evidenceId:eid,time:bestTime(r),type:r.event_type||r.EventType||r._path||parsed.parser,source:r.source||r.host||r.hostname||r.Computer||'',summary:summary(r)}));
-  document.getElementById('evidenceEditor').classList.add('hidden');document.getElementById('evidenceFile').value='';save()
+  let hash,parsed;try{hash=await sha256(file);parsed=await parseFile(file)}catch(err){alert('Import failed: '+err.message+'\nNo timeline events were added.');return}const eid=id();
+  state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.records.length,100000),importWarning:parsed.warning||'',createdAt:now()});
+  parsed.records.slice(0,15000).forEach(r=>{const facts=recordFacts(r);state.timeline.push({id:id(),caseId,evidenceId:eid,time:bestTime(r),type: facts.src||facts.dst ? 'Network flow' : (r.event_type||r.EventType||r._path||parsed.parser),source:facts.src||r.host||r.hostname||r.Computer||'',summary:summary(r),flow:facts})});
+  document.getElementById('evidenceEditor').classList.add('hidden');document.getElementById('evidenceFile').value='';try{save();if(parsed.warning)alert(parsed.warning)}catch(err){alert('Browser storage limit exceeded. Export state or reduce the number of rows. '+err.message)}
 };
 function renderEvidence(){
   document.getElementById('evidenceBody').innerHTML=state.evidence.map(e=>`<tr><td>${esc(caseById(e.caseId)?.caseNumber||'')}</td><td>${esc(e.evidenceNumber)}</td><td>${esc(e.filename)}<div class="small">${e.size} bytes</div></td><td>${esc(e.sourceTool)}<div class="small">${esc(e.sourceSystem)}</div></td><td class="small">${esc(e.sha256)}</td><td>${esc(e.parser)}</td><td>${e.parsedRecords}</td></tr>`).join('')||'<tr><td colspan="7">No evidence.</td></tr>'
@@ -246,13 +250,41 @@ function renderTimeline(){
 }
 document.getElementById('timelineCaseFilter').onchange=renderTimeline;document.getElementById('timelineSearch').oninput=renderTimeline;
 
+function reportClean(t) {
+  if(!t || !t.summary)return false;
+  if(/^(line=)?PK[^a-z0-9]/i.test(t.summary) || /\\\[Content_Types\\\]\.xml/i.test(t.summary))return false;
+  if(t.type==='Generic text' && /[\uFFFD\u0000-\u001f]/.test(t.summary))return false;
+  return true;
+}
+function fmtInt(n){return n.toLocaleString('en-US')}
+function trafficAnalysis(events){
+  const flows=events.filter(t=>t.flow&&(t.flow.src||t.flow.dst)), out=[];
+  if(!flows.length)return ['No structured network-flow records are available. Import an XLSX or CSV export with source and destination IP fields.',''];
+  const source=new Map(), destination=new Map(), ports=new Map(), protocols=new Map(), countries=new Map();
+  let totalBytes=0,knownBytes=0,earliest='',latest='';
+  const increment=(map,key)=>{if(key)map.set(key,(map.get(key)||0)+1)};
+  for(const t of flows){
+    const f=t.flow;
+    increment(source,f.src);increment(destination,f.dst);increment(ports,f.dstPort);increment(protocols,f.protocol);increment(countries,f.country);
+    if(f.bytes!==null&&Number.isFinite(f.bytes)){totalBytes+=f.bytes;knownBytes++}
+    if(t.time && !Number.isNaN(Date.parse(t.time))){const tm=new Date(t.time).toISOString();if(!earliest||tm<earliest)earliest=tm;if(!latest||tm>latest)latest=tm}
+  }
+  out.push('Parsed network-flow records: **'+fmtInt(flows.length)+'**');
+  if(earliest)out.push('Observed timestamps: **'+earliest+'** through **'+latest+'** (as provided by source data).');
+  if(knownBytes)out.push('Sum of reported byte counts: **'+fmtInt(totalBytes)+' bytes** across **'+fmtInt(knownBytes)+'** records with a recognized total-byte field. Direction and uniqueness are not independently validated.');
+  const top=(label,map)=>{if(!map.size)return;out.push('','### '+label,'','| Value | Flows |','|---|---:|');for(const [k,v] of [...map].sort((a,b)=>b[1]-a[1]).slice(0,10))out.push('| '+String(k).replaceAll('|','/')+' | '+fmtInt(v)+' |')};
+  top('Top source addresses',source);top('Top destination addresses',destination);top('Destination ports',ports);top('Protocols',protocols);top('Reported destination countries',countries);
+  out.push('','**Assessment:** These are observed flow records, not proof of malicious activity or exfiltration. Confirm IP ownership, public/private routing, flow direction, timestamps, and byte-count semantics before drawing conclusions.','');
+  return out;
+}
 function buildReport(cid){
   const c=caseById(cid);if(!c)return 'Select a case.';
-  const ev=state.evidence.filter(e=>e.caseId===cid), fi=state.findings.filter(f=>f.caseId===cid), tl=state.timeline.filter(t=>t.caseId===cid).slice(0,1000);
+  const ev=state.evidence.filter(e=>e.caseId===cid), fi=state.findings.filter(f=>f.caseId===cid), all=state.timeline.filter(t=>t.caseId===cid&&reportClean(t)), tl=all.slice(0,200);
   const out=[`# Investigation Report - ${c.caseNumber}`,'',`**Title:** ${c.title}`,`**Classification:** ${c.classification}`,`**Status:** ${c.status}`,`**Lead Investigator:** ${c.lead||'Unassigned'}`,`**Generated:** ${now()}`,'','## Scope and Background','',c.description||'No scope narrative entered.','','## Evidence',''];
   ev.forEach(e=>out.push(`### ${e.evidenceNumber} - ${e.filename}`,`- SHA-256: \`${e.sha256}\``,`- Size: ${e.size} bytes`,`- Source tool: ${e.sourceTool||'Not specified'}`,`- Source system: ${e.sourceSystem||'Not specified'}`,`- Collector: ${e.collector||'Not specified'}`,`- Parser: ${e.parser}`,`- Parsed records: ${e.parsedRecords}`,`- Notes: ${e.notes||''}`,''));
-  out.push('## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
-  out.push('## Timeline','','| Time | Type | Source | Summary |','|---|---|---|---|');tl.forEach(t=>out.push(`| ${t.time||'Unknown'} | ${String(t.type||'').replaceAll('|','\\|')} | ${String(t.source||'').replaceAll('|','\\|')} | ${String(t.summary||'').replaceAll('|','\\|')} |`));
+  out.push('## Network Traffic Analysis','',...trafficAnalysis(all),'## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
+  out.push('## Selected Timeline Records','', 'Displaying '+tl.length+' of '+all.length+' readable records; use the Timeline tab for searching.','','| Time | Type | Source | Summary |','|---|---|---|---|');tl.forEach(t=>out.push(`| ${t.time||'Unknown'} | ${String(t.type||'').replaceAll('|','\\|')} | ${String(t.source||'').replaceAll('|','\\|')} | ${String(t.summary||'').replaceAll('|','\\|')} |`));
+  if(ev.some(e=>e.parser==='Generic text'&&/\.xlsx$/i.test(e.filename)))out.push('','## Import Quality Warning','','An earlier .xlsx upload was treated as raw text and was excluded from this report. Re-import the workbook after removing the old evidence entry through a case reset or a fresh case.');
   out.push('','## Methodology and Integrity','','Evidence metadata includes SHA-256 hashes calculated in the browser over the original selected file bytes. In this prototype, the file itself is not persisted; only metadata and normalized records are stored in localStorage.','','## Limitations','','This browser build is for rapid prototyping only and is not a production evidence repository or HIPAA-compliant deployment.');
   return out.join('\n')
 }
