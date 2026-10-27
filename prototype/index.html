@@ -194,8 +194,8 @@ h1,h2,h3{margin-top:0}
   <div id="timelineCount" class="timeline-meta"></div>
   <div class="card"><div class="timeline-scroll">
     <table class="timeline-table">
-      <colgroup><col style="width:16%"><col style="width:13%"><col style="width:17%"><col style="width:16%"><col style="width:38%"></colgroup>
-      <thead><tr><th>Time (UTC)</th><th>Case</th><th>Type</th><th>Source</th><th>Summary</th></tr></thead>
+      <colgroup><col style="width:17%"><col style="width:11%"><col style="width:14%"><col style="width:13%"><col style="width:33%"><col style="width:12%"></colgroup>
+      <thead><tr><th>Time (UTC)</th><th>Case</th><th>Type</th><th>Source</th><th>Summary</th><th>Evidence</th></tr></thead>
       <tbody id="timelineBody"></tbody>
     </table>
   </div></div>
@@ -602,8 +602,10 @@ function renderTimeline(){
     '<tr><td class="small">'+esc(showTimelineTime(t.time))+'</td>'+
     '<td class="case-id">'+esc(caseById(t.caseId)?.caseNumber||'')+'</td>'+
     '<td>'+esc(t.type)+'</td><td>'+esc(t.source)+'</td>'+
-    '<td>'+timelineSummaryHTML(t)+'</td></tr>'
-  ).join('') || '<tr><td colspan="5">No readable timeline events. Reimport the original .xlsx workbook to generate valid network-flow records.</td></tr>';
+    '<td>'+timelineSummaryHTML(t)+'</td>'+
+    '<td class="small">'+esc(state.evidence.find(e=>e.id===t.evidenceId)?.evidenceNumber||'—')+
+    (t.connectionId?'<div class="badge">Selected connection</div>':'')+'</td></tr>'
+  ).join('') || '<tr><td colspan="6">No readable timeline events. Import NetFlow/PCAP and select relevant connections in Connections Explorer to add them here.</td></tr>';
 }
 document.getElementById('timelineCaseFilter').onchange=renderTimeline;
 document.getElementById('timelineSearch').oninput=renderTimeline;
