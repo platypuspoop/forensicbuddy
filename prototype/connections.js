@@ -79,7 +79,7 @@ function captureTransport(data,linkType,time,originalLength){
     dstPort=String((data[pos+2]<<8)|data[pos+3]);
   }
   return {src,dst,srcPort,dstPort,protocol,time,bytes:originalLength,
-    packets:1,country:"",metric:"Captured frame bytes",countKind:"Captured packets"};
+    packets:1,country:"",metric:"Capture-reported on-wire frame bytes",countKind:"Captured packets"};
 }
 function connectionKey(f){
   return [f.src,f.srcPort,f.dst,f.dstPort,f.protocol].join("|");
@@ -232,8 +232,8 @@ function connectionMatches(conn,filter){
   const preset=f.preset||"all",dest=Number(conn.dstPort);
   if(preset==="external"&&!publicIp(conn.src)&&!publicIp(conn.dst))return false;
   if(preset==="dns"&&!(dest===53||Number(conn.srcPort)===53||dest===853))return false;
-  if(preset==="web"&&![80,443,8080,8443].includes(dest))return false;
-  if(preset==="remote"&&![22,3389,445,135,139,5985,5986,5900].includes(dest))return false;
+  if(preset==="web"&&![80,443,8080,8443].includes(dest)&&![80,443,8080,8443].includes(Number(conn.srcPort)))return false;
+  if(preset==="remote"&&![22,3389,445,135,139,5985,5986,5900].includes(dest)&&![22,3389,445,135,139,5985,5986,5900].includes(Number(conn.srcPort)))return false;
   if(preset==="large"&&!(conn.bytes!==null&&conn.bytes>=1000000))return false;
   if(preset==="repeated"&&!(conn.records>=10||(conn.packets!==null&&conn.packets>=10)))return false;
   return true;
