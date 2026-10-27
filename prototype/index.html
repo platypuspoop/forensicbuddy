@@ -27,7 +27,7 @@ h1,h2,h3{margin-top:0}
 .timeline-table{table-layout:fixed;min-width:780px}
 .timeline-table td{overflow-wrap:anywhere;word-break:normal;white-space:normal;line-height:1.5}
 .timeline-table th{white-space:nowrap}
-.timeline-table .case-id{overflow-wrap:normal;word-break:normal}
+.timeline-table .case-id{overflow-wrap:normal;word-break:normal;white-space:nowrap}
 .timeline-table details summary{cursor:pointer;font-size:12px;font-weight:700;color:#344054;margin-top:5px}
 .timeline-table details p{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0;font-size:12px}
 .timeline-table tbody tr:hover{background:#f7f9fb}
@@ -287,7 +287,7 @@ document.getElementById('saveEvidenceBtn').onclick=async()=>{
   saveButton.disabled=true;
   let hash,parsed;
   try{hash=await sha256(file);parsed=await parseFile(file)}
-  catch(err){alert('Import failed: '+err.message+'\\nNo timeline events were added.');saveButton.disabled=false;return}
+  catch(err){alert('Import failed: '+err.message+'\nNo timeline events were added.');saveButton.disabled=false;return}
   const sequence=nextEvidenceSequence(caseId),num=formatEvidenceNumber(sequence),eid=id();
   state.evidenceSequences=state.evidenceSequences||{};
   const previousSequence=state.evidenceSequences[caseId];
@@ -388,9 +388,9 @@ document.getElementById('cleanLegacyBtn').onclick=()=>{
   const affected=legacyXlsxRows(cid);
   if(!affected.length)return;
   const label=cid?(caseById(cid)?.caseNumber||'the selected case'):'all cases';
-  if(!confirm('Remove '+affected.length+' invalid timeline record(s) from '+label+'?\\n\\n'+
+  if(!confirm('Remove '+affected.length+' invalid timeline record(s) from '+label+'?\n\n'+
     'This affects only rows linked to legacy .xlsx files parsed as generic text. '+
-    'Cases, findings, evidence numbers and SHA-256 metadata will be kept.\\n\\n'+
+    'Cases, findings, evidence numbers and SHA-256 metadata will be kept.\n\n'+
     'This cannot be undone unless you exported a JSON backup.'))return;
   const previousTimeline=state.timeline;
   const previousMetadata=broken.map(e=>({
