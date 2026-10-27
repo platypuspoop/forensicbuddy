@@ -36,6 +36,20 @@ h1,h2,h3{margin-top:0}
 .timeline-meta{margin-bottom:10px;color:var(--muted);font-size:13px}
 .import-warning{color:#864a13;font-size:12px;font-weight:700}
 .small{overflow-wrap:anywhere}
+.connection-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.connection-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}
+.connection-table-scroll{overflow:auto;max-width:100%}
+.connection-table{min-width:1040px;table-layout:fixed;font-size:13px}
+.connection-table th{position:sticky;top:0;z-index:1;white-space:nowrap}
+.connection-table td{overflow-wrap:anywhere;line-height:1.5}
+.connection-table tr.selected{background:#edf6ff}
+.connection-table tr.promoted{background:#f5f6f8}
+.connection-table .mono{font-family:Consolas,monospace;font-size:12px}
+.connection-table input[type=checkbox]{width:auto}
+.connection-help{font-size:12px;color:#5c6472;margin:6px 0}
+.connection-summary{background:#f2f6fb;border:1px solid #d8e0e9;border-radius:6px;padding:12px;margin:12px 0}
+.connection-summary strong{font-variant-numeric:tabular-nums}
+
 .report-preview{padding:22px 26px;background:#fff;border:1px solid var(--line);border-radius:6px;line-height:1.55;overflow-wrap:anywhere}
 .report-preview h1{font-size:23px;margin:0 0 16px;border-bottom:1px solid var(--line);padding-bottom:10px}
 .report-preview h2{font-size:18px;margin:26px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
@@ -59,6 +73,7 @@ h1,h2,h3{margin-top:0}
 <div class="tabs">
   <button data-tab="cases" class="active">Cases</button>
   <button data-tab="evidence">Evidence</button>
+  <button data-tab="connections">Connections</button>
   <button data-tab="findings">Findings</button>
   <button data-tab="timeline">Timeline</button>
   <button data-tab="report">Report</button>
@@ -99,6 +114,53 @@ h1,h2,h3{margin-top:0}
     <div class="actions"><button id="saveEvidenceBtn">Ingest</button><button class="secondary" id="cancelEvidenceBtn">Cancel</button></div>
   </div>
   <div class="card"><table><thead><tr><th>Case</th><th>ID</th><th>File</th><th>Source</th><th>SHA-256</th><th>Parser</th><th>Records</th></tr></thead><tbody id="evidenceBody"></tbody></table></div>
+  <h2>Selected Connection Evidence (derived)</h2>
+  <p class="connection-help">Analyst-selected summaries linked to the original evidence. These have unique child identifiers, but are not separate preserved files or independently hashed artifacts.</p>
+  <div class="card"><div class="connection-table-scroll"><table style="min-width:900px">
+    <thead><tr><th>Case</th><th>Derived reference</th><th>Original evidence</th><th>Observed connection</th><th>Rationale</th><th>Timeline</th></tr></thead>
+    <tbody id="derivedEvidenceBody"></tbody>
+  </table></div></div>
+</section>
+
+<section id="tab-connections" class="hidden">
+  <div class="actions" style="justify-content:space-between">
+    <div><h1>Connections Explorer</h1><div class="connection-help">Derived summaries from uploaded NetFlow exports and supported PCAP/PCAPNG network headers. The original evidence hash is retained.</div></div>
+    <div class="actions"><button class="secondary" id="exportConnectionsBtn">Export filtered CSV</button><button id="promoteConnectionsBtn">Add selected to timeline</button></div>
+  </div>
+  <div class="card">
+    <div class="connection-grid">
+      <div><label>Case</label><select id="connectionsCase"></select></div>
+      <div><label>Source evidence</label><select id="connectionsEvidence"></select></div>
+      <div><label>Quick filter</label><select id="connectionsPreset">
+        <option value="all">All connections</option><option value="external">Public IP involved</option>
+        <option value="dns">DNS (53/853)</option><option value="web">Web (80/443/8080/8443)</option>
+        <option value="remote">Remote access / SMB</option><option value="large">At least 1 MB reported</option>
+        <option value="repeated">10+ records or packets</option>
+      </select></div>
+      <div><label>IP contains</label><input id="connectionsIp" placeholder="Source or destination IP"></div>
+      <div><label>Port equals</label><input id="connectionsPort" inputmode="numeric" placeholder="443"></div>
+      <div><label>Protocol</label><select id="connectionsProto"><option value="all">All protocols</option><option>TCP</option><option>UDP</option><option>ICMP</option><option>ICMPv6</option><option>GRE</option><option>ESP</option><option>SCTP</option><option>Unknown</option></select></div>
+      <div><label>Minimum bytes</label><input id="connectionsMinBytes" type="number" min="0" placeholder="0"></div>
+      <div><label>First/last seen on or after</label><input id="connectionsFrom" type="datetime-local"></div>
+      <div><label>First/last seen on or before</label><input id="connectionsTo" type="datetime-local"></div>
+    </div>
+    <div class="connection-toolbar"><button class="secondary" id="clearConnectionsFiltersBtn">Clear filters</button>
+      <button class="secondary" id="selectVisibleConnectionsBtn">Select displayed</button>
+      <button class="secondary" id="clearConnectionsSelectionBtn">Clear selection</button>
+      <span id="connectionsStatus" class="small" role="status"></span>
+    </div>
+    <div id="connectionsSummary" class="connection-summary" role="status">Select a case to inspect network connections.</div>
+    <div class="connection-help">Rows represent directional 5-tuples, not verified sessions. PCAP bytes are captured frame lengths; NetFlow bytes come from export fields. Counts and timestamps retain source limitations.</div>
+    <label for="connectionsReason">Analyst rationale for selected connection(s)</label>
+    <textarea id="connectionsReason" placeholder="Explain why these particular connections are relevant to the case. Required when adding to the timeline." style="min-height:62px"></textarea>
+  </div>
+  <div class="card"><div class="connection-table-scroll">
+    <table class="connection-table">
+      <colgroup><col style="width:4%"><col style="width:13%"><col style="width:13%"><col style="width:10%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:14%"><col style="width:10%"><col style="width:8%"></colgroup>
+      <thead><tr><th>Select</th><th>Source</th><th>Destination</th><th>Protocol</th><th>Records</th><th>Packets</th><th>Bytes</th><th>First seen (UTC)</th><th>Evidence</th><th>Status</th></tr></thead>
+      <tbody id="connectionsBody"></tbody>
+    </table>
+  </div><p class="connection-help">A maximum of 500 matching rows are displayed at once. Narrow the filters or export the matching set to CSV.</p></div>
 </section>
 
 <section id="tab-findings" class="hidden">
@@ -138,8 +200,8 @@ h1,h2,h3{margin-top:0}
   <div id="timelineCount" class="timeline-meta"></div>
   <div class="card"><div class="timeline-scroll">
     <table class="timeline-table">
-      <colgroup><col style="width:16%"><col style="width:13%"><col style="width:17%"><col style="width:16%"><col style="width:38%"></colgroup>
-      <thead><tr><th>Time (UTC)</th><th>Case</th><th>Type</th><th>Source</th><th>Summary</th></tr></thead>
+      <colgroup><col style="width:17%"><col style="width:11%"><col style="width:14%"><col style="width:13%"><col style="width:33%"><col style="width:12%"></colgroup>
+      <thead><tr><th>Time (UTC)</th><th>Case</th><th>Type</th><th>Source</th><th>Summary</th><th>Evidence</th></tr></thead>
       <tbody id="timelineBody"></tbody>
     </table>
   </div></div>
@@ -159,9 +221,11 @@ h1,h2,h3{margin-top:0}
 </main>
 
 <script src="xlsx.js"></script>
+<script src="connections.js"></script>
 <script>
 const KEY='forensicbuddyPrototypeV1';
 const state=load();
+if(!Array.isArray(state.connections))state.connections=[];
 let activeCaseId=state.cases[0]?.id||null;
 
 function load(){
@@ -196,11 +260,12 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   document.getElementById('tab-'+b.dataset.tab).classList.remove('hidden');
   if(b.dataset.tab==='report') renderReport();
   if(b.dataset.tab==='timeline') renderTimeline();
+  if(b.dataset.tab==='connections') renderConnections();
 });
 
 function renderCaseOptions(){
   // Do not reset the investigator's case selections when the page re-renders.
-  const ids=['evidenceCase','findingCase','timelineCaseFilter','reportCase'];
+  const ids=['evidenceCase','findingCase','timelineCaseFilter','reportCase','connectionsCase'];
   const previous=Object.fromEntries(ids.map(id=>[id,document.getElementById(id).value]));
   ids.forEach(id=>{
     const element=document.getElementById(id);
@@ -210,6 +275,7 @@ function renderCaseOptions(){
     element.value=state.cases.some(c=>c.id===preferred)?preferred:'';
   });
   refreshEvidenceNumber();
+  renderConnectionEvidenceOptions();
 }
 function renderCases(){
   const b=document.getElementById('casesBody');
@@ -264,7 +330,8 @@ function summary(r){
 async function parseFile(file){
   const lower=file.name.toLowerCase(); let text='';
   if(lower.endsWith('.xlsx'))return parseSpreadsheet(file);
-  if(/\.(xls|xlsm|xlsb|zip|pcap|pcapng|evtx|exe|dll|pdf)$/i.test(lower))return {parser:'Unsupported binary (metadata only)',records:[],warning:'Binary file not parsed. Export .xlsx or CSV for analysis.'};
+  if(/\.pcap(ng)?$/i.test(lower))return await parseCaptureFile(file);
+  if(/\.(xls|xlsm|xlsb|zip|evtx|exe|dll|pdf)$/i.test(lower))return {parser:'Unsupported binary (metadata only)',records:[],warning:'This binary format is not parsed by the browser prototype.'};
   try{text=await file.text()}catch{return {parser:'Preserved only',records:[]}}
   if(text.startsWith('#separator')||text.includes('#fields\t'))return {parser:'Zeek TSV',records:parseZeekTSV(text)}
   if(lower.endsWith('.json')||lower.endsWith('.jsonl')||lower.endsWith('.ndjson')||/^[\s]*[\[{]/.test(text)){
@@ -288,33 +355,222 @@ document.getElementById('saveEvidenceBtn').onclick=async()=>{
   let hash,parsed;
   try{hash=await sha256(file);parsed=await parseFile(file)}
   catch(err){alert('Import failed: '+err.message+'\nNo timeline events were added.');saveButton.disabled=false;return}
+  const fromCapture=Array.isArray(parsed.connections);
+  const derived=fromCapture ? {connections:parsed.connections,recognized:parsed.parsedRecords||0,skipped:0,warning:parsed.warning||''}
+    : extractNetflowConnections(parsed.records||[]);
+  const networkFormat=fromCapture||derived.recognized>0;
   const sequence=nextEvidenceSequence(caseId),num=formatEvidenceNumber(sequence),eid=id();
   state.evidenceSequences=state.evidenceSequences||{};
   const previousSequence=state.evidenceSequences[caseId];
   const previousTimelineSize=state.timeline.length;
+  const previousConnectionSize=state.connections.length;
   state.evidenceSequences[caseId]=sequence;
-  state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.records.length,100000),importWarning:parsed.warning||'',createdAt:now()});
-  parsed.records.slice(0,15000).forEach(r=>{const facts=recordFacts(r);state.timeline.push({id:id(),caseId,evidenceId:eid,time:bestTime(r),type: facts.src||facts.dst ? 'Network flow' : (r.event_type||r.EventType||r._path||parsed.parser),source:facts.src||r.host||r.hostname||r.Computer||'',summary:summary(r),flow:facts})});
+  state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.parsedRecords??(parsed.records||[]).length,100000),importWarning:[parsed.warning,derived.warning].filter(Boolean).join(' '),connectionCount:derived.connections.length,createdAt:now()});
+  if(networkFormat){
+    for(const conn of derived.connections)state.connections.push({...conn,id:id(),caseId,evidenceId:eid,promotedAt:""});
+  }else{
+    (parsed.records||[]).slice(0,15000).forEach(r=>{
+      state.timeline.push({id:id(),caseId,evidenceId:eid,time:bestTime(r),
+        type:r.event_type||r.EventType||r._path||parsed.parser,
+        source:r.host||r.hostname||r.Computer||'',
+        summary:summary(r)});
+    });
+  }
   try{
     save();
     document.getElementById('evidenceEditor').classList.add('hidden');
     document.getElementById('evidenceFile').value='';
-    if(parsed.warning)alert(parsed.warning);
+    if(networkFormat){
+      selectedConnectionIds.clear();
+      document.getElementById('connectionsCase').value=caseId;
+      renderConnectionEvidenceOptions();
+      document.getElementById('connectionsEvidence').value=eid;
+      document.querySelector('[data-tab="connections"]').click();
+    }
+    const notices=[parsed.warning,derived.warning].filter(Boolean);
+    if(notices.length)alert(notices.join('\n'));
   }catch(err){
     state.evidence.pop();
     state.timeline.length=previousTimelineSize;
+    state.connections.length=previousConnectionSize;
     if(previousSequence===undefined)delete state.evidenceSequences[caseId];
     else state.evidenceSequences[caseId]=previousSequence;
     refreshEvidenceNumber();
     alert('Evidence was not saved. Browser storage may be full: '+err.message);
   }finally{saveButton.disabled=false}
 };
+function derivedReferenceFor(connection,evidence){
+  if(connection.derivedEvidenceNumber)return connection.derivedEvidenceNumber;
+  const siblings=state.connections.filter(c=>c.evidenceId===evidence.id&&c.promotedAt);
+  const position=Math.max(1,siblings.findIndex(c=>c.id===connection.id)+1);
+  return evidence.evidenceNumber+'-C'+String(position).padStart(4,'0');
+}
+function renderDerivedEvidence(){
+  document.getElementById('derivedEvidenceBody').innerHTML=state.connections
+    .filter(c=>c.promotedAt).sort((a,b)=>a.promotedAt.localeCompare(b.promotedAt))
+    .map(c=>{
+      const e=state.evidence.find(x=>x.id===c.evidenceId);
+      return '<tr><td>'+esc(caseById(c.caseId)?.caseNumber||'')+'</td>'+
+        '<td><strong>'+esc(derivedReferenceFor(c,e||{id:'',evidenceNumber:'Unknown'}))+'</strong></td>'+
+        '<td>'+esc(e?.evidenceNumber||'Unknown')+'<div class="small">'+esc(e?.filename||'')+'</div></td>'+
+        '<td class="small">'+esc(connectionDescription(c))+'</td>'+
+        '<td>'+esc(c.promotionNote||'Not specified')+'</td><td><span class="badge">Added</span></td></tr>';
+    }).join('')||'<tr><td colspan="6">No connections have been selected as derived evidence.</td></tr>';
+}
 function renderEvidence(){
   document.getElementById('evidenceBody').innerHTML=state.evidence.map(e=>{
     const legacy=legacyXlsxEvidence(e.caseId).some(x=>x.id===e.id);
-    return `<tr><td>${esc(caseById(e.caseId)?.caseNumber||'')}</td><td>${esc(e.evidenceNumber)}</td><td>${esc(e.filename)}<div class="small">${e.size} bytes</div></td><td>${esc(e.sourceTool)}<div class="small">${esc(e.sourceSystem)}</div></td><td class="small">${esc(e.sha256)}</td><td>${esc(e.parser)}${legacy?'<div class="import-warning">Invalid legacy XLSX import; reimport source file</div>':''}</td><td>${legacy?'Unusable':e.parsedRecords}</td></tr>`;
+    return `<tr><td>${esc(caseById(e.caseId)?.caseNumber||'')}</td><td>${esc(e.evidenceNumber)}</td><td>${esc(e.filename)}<div class="small">${e.size} bytes</div></td><td>${esc(e.sourceTool)}<div class="small">${esc(e.sourceSystem)}</div></td><td class="small">${esc(e.sha256)}</td><td>${esc(e.parser)}${legacy?'<div class="import-warning">Invalid legacy XLSX import; reimport source file</div>':''}</td><td>${legacy?'Unusable':e.parsedRecords}<div class="small">${e.connectionCount||0} indexed connections</div></td></tr>`;
   }).join('')||'<tr><td colspan="7">No evidence.</td></tr>'
 }
+
+
+const selectedConnectionIds=new Set();
+function renderConnectionEvidenceOptions(){
+  const caseId=document.getElementById('connectionsCase').value;
+  const element=document.getElementById('connectionsEvidence');
+  const old=element.value;
+  const items=state.evidence.filter(e=>e.caseId===caseId);
+  element.innerHTML='<option value="">All indexed evidence</option>'+
+    items.map(e=>'<option value="'+esc(e.id)+'">'+esc(e.evidenceNumber+' - '+e.filename)+'</option>').join('');
+  element.value=items.some(e=>e.id===old)?old:'';
+}
+function currentConnectionFilters(){
+  return {preset:document.getElementById('connectionsPreset').value,
+    ip:document.getElementById('connectionsIp').value,
+    port:document.getElementById('connectionsPort').value,
+    proto:document.getElementById('connectionsProto').value,
+    minBytes:document.getElementById('connectionsMinBytes').value,
+    from:document.getElementById('connectionsFrom').value,
+    to:document.getElementById('connectionsTo').value};
+}
+function matchingConnections(){
+  const cid=document.getElementById('connectionsCase').value,
+    eid=document.getElementById('connectionsEvidence').value;
+  const filter=currentConnectionFilters();
+  if(!cid)return [];
+  return state.connections.filter(c=>c.caseId===cid&&(!eid||c.evidenceId===eid)&&connectionMatches(c,filter))
+    .sort((a,b)=>(b.bytes??-1)-(a.bytes??-1)||a.src.localeCompare(b.src));
+}
+function displayBytes(n){
+  if(n===null||!Number.isFinite(n))return 'N/A';
+  return n.toLocaleString('en-US');
+}
+function renderConnections(){
+  const cid=document.getElementById('connectionsCase').value;
+  const matches=matchingConnections(),selected=matches.filter(c=>selectedConnectionIds.has(c.id));
+  const sourceCount=new Set(matches.map(c=>c.src)).size, destCount=new Set(matches.map(c=>c.dst)).size;
+  const knownBytes=matches.filter(c=>c.bytes!==null),totalBytes=knownBytes.reduce((n,c)=>n+c.bytes,0);
+  const totalRecords=matches.reduce((n,c)=>n+c.records,0);
+  document.getElementById('connectionsSummary').textContent= !cid
+    ?'Select a case to inspect network connections.'
+    :matches.length+' matching directional connections | '+sourceCount+' source IP(s) | '+
+      destCount+' destination IP(s) | '+totalRecords.toLocaleString('en-US')+' indexed records | '+
+      (knownBytes.length?totalBytes.toLocaleString('en-US')+' reported/captured bytes across '+knownBytes.length+' connections':'byte counts unavailable')+
+      ' | '+selectedConnectionIds.size+' selected';
+  document.getElementById('connectionsStatus').textContent=
+    'Showing '+Math.min(500,matches.length)+' / '+matches.length+' matching. '+selected.length+' selected in current filter.';
+  document.getElementById('connectionsBody').innerHTML=matches.slice(0,500).map(c=>{
+    const evidence=state.evidence.find(e=>e.id===c.evidenceId);
+    const checked=selectedConnectionIds.has(c.id),promoted=!!c.promotedAt;
+    const desc=connectionDescription(c);
+    return '<tr class="'+(checked?'selected ': '')+(promoted?'promoted':'')+'">'+
+      '<td><input type="checkbox" data-conn-id="'+esc(c.id)+'" aria-label="Select connection" '+(checked?'checked ':'')+(promoted?'disabled ':'')+'></td>'+
+      '<td class="mono">'+esc(c.src+(c.srcPort?':'+c.srcPort:''))+'</td>'+
+      '<td class="mono">'+esc(c.dst+(c.dstPort?':'+c.dstPort:''))+'</td>'+
+      '<td>'+esc(c.protocol)+'</td><td>'+displayBytes(c.records)+'</td>'+
+      '<td>'+displayBytes(c.packets)+'</td><td>'+displayBytes(c.bytes)+'</td>'+
+      '<td class="small">'+esc(c.firstSeen?showTimelineTime(c.firstSeen):'Unknown')+'</td>'+
+      '<td>'+esc(evidence?.evidenceNumber||'Unknown')+'<div class="small">'+esc(evidence?.filename||'')+'</div></td>'+
+      '<td>'+ (promoted?'<span class="badge">On timeline</span>':'Indexed')+
+      '<details><summary>Details</summary><div class="small">'+esc(desc)+'</div>'+
+      '<div class="small">SHA-256 '+esc(evidence?.sha256||'Unknown')+'</div></details></td></tr>';
+  }).join('')||'<tr><td colspan="10">No indexed connections match these filters. Upload NetFlow CSV/XLSX or a supported PCAP to this case.</td></tr>';
+  document.querySelectorAll('#connectionsBody input[data-conn-id]').forEach(cb=>cb.onchange=()=>{
+    if(cb.checked)selectedConnectionIds.add(cb.dataset.connId);else selectedConnectionIds.delete(cb.dataset.connId);
+    renderConnections();
+  });
+}
+document.getElementById('connectionsCase').onchange=()=>{
+  selectedConnectionIds.clear();
+  renderConnectionEvidenceOptions();renderConnections();
+};
+['connectionsEvidence','connectionsPreset','connectionsIp','connectionsPort','connectionsProto',
+ 'connectionsMinBytes','connectionsFrom','connectionsTo'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.onchange=renderConnections;
+  if(el.tagName==='INPUT')el.oninput=renderConnections;
+});
+document.getElementById('clearConnectionsFiltersBtn').onclick=()=>{
+  for(const id of ['connectionsIp','connectionsPort','connectionsMinBytes','connectionsFrom','connectionsTo'])
+    document.getElementById(id).value='';
+  document.getElementById('connectionsPreset').value='all';
+  document.getElementById('connectionsProto').value='all';
+  renderConnections();
+};
+document.getElementById('selectVisibleConnectionsBtn').onclick=()=>{
+  for(const c of matchingConnections().slice(0,500))if(!c.promotedAt)selectedConnectionIds.add(c.id);
+  renderConnections();
+};
+document.getElementById('clearConnectionsSelectionBtn').onclick=()=>{selectedConnectionIds.clear();renderConnections()};
+function safeCsvCell(value){
+  let t=String(value??'');
+  if(/^[\s]*[=+\-@]/.test(t))t="'"+t;
+  return '"'+t.replaceAll('"','""')+'"';
+}
+function downloadBlob(text,filename,type){
+  const blob=new Blob([text],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+document.getElementById('exportConnectionsBtn').onclick=()=>{
+  const cid=document.getElementById('connectionsCase').value;
+  if(!cid)return alert('Select a case.');
+  const records=matchingConnections(),headers=['Evidence','Source','SourcePort','Destination','DestinationPort',
+    'Protocol','Records','Packets','Bytes','ByteMetric','PacketMetric','FirstSeenUTC','LastSeenUTC','ReportedCountry','TimelineStatus'];
+  const data=[headers.map(safeCsvCell).join(',')];
+  for(const c of records){
+    const evidence=state.evidence.find(e=>e.id===c.evidenceId);
+    data.push([evidence?.evidenceNumber,c.src,c.srcPort,c.dst,c.dstPort,c.protocol,c.records,
+      c.packets??'',c.bytes??'',c.metric,c.countKind,c.firstSeen,c.lastSeen,c.country,c.promotedAt?'Promoted':'Indexed']
+      .map(safeCsvCell).join(','));
+  }
+  downloadBlob(data.join('\r\n'),(caseById(cid)?.caseNumber||'case')+'_connections.csv','text/csv');
+};
+document.getElementById('promoteConnectionsBtn').onclick=()=>{
+  const cid=document.getElementById('connectionsCase').value,
+    reason=document.getElementById('connectionsReason').value.trim(),
+    chosen=state.connections.filter(c=>selectedConnectionIds.has(c.id)&&c.caseId===cid&&!c.promotedAt);
+  if(!cid||!chosen.length)return alert('Select at least one unpromoted connection from this case.');
+  if(!reason)return alert('Enter the analyst rationale before adding a connection to the case timeline.');
+  if(chosen.length>100)return alert('Select at most 100 connections per promotion to avoid excessive timeline entries.');
+  if(!confirm('Add '+chosen.length+' observed connection(s) to the case timeline as derived evidence?'))return;
+  const originalTimeline=state.timeline.length,stamps=chosen.map(c=>c.promotedAt),time=now();
+  for(const c of chosen){
+    const e=state.evidence.find(item=>item.id===c.evidenceId);
+    const used=state.connections.filter(x=>x.evidenceId===c.evidenceId&&x.derivedEvidenceNumber)
+      .map(x=>Number(/-C(\d+)$/.exec(x.derivedEvidenceNumber)?.[1])||0);
+    const next=Math.max(0,...used)+1;
+    c.derivedEvidenceNumber=(e?.evidenceNumber||'E-UNKNOWN')+'-C'+String(next).padStart(4,'0');
+    c.promotedAt=time;
+    c.promotionNote=reason;
+    const summary='Derived evidence: '+c.derivedEvidenceNumber+' | Selected connection: '+connectionDescription(c)+
+      ' | Source evidence: '+(e?.evidenceNumber||'Unknown')+' ('+(e?.filename||'unknown')+')'+
+      ' | SHA-256: '+(e?.sha256||'Unknown')+' | Analyst rationale: '+reason;
+    state.timeline.push({id:id(),caseId:cid,evidenceId:c.evidenceId,connectionId:c.id,
+      derivedEvidenceNumber:c.derivedEvidenceNumber,
+      time:c.firstSeen||'',type:'Selected connection',source:c.src,summary,
+      createdAt:time,analystRationale:reason});
+  }
+  try{
+    save();selectedConnectionIds.clear();
+    document.getElementById('connectionsReason').value='';
+    document.getElementById('connectionsStatus').textContent='Added '+chosen.length+' connection(s) to the case timeline.';
+  }catch(err){
+    state.timeline.length=originalTimeline;
+    chosen.forEach((c,i)=>{c.promotedAt=stamps[i];delete c.promotionNote;delete c.derivedEvidenceNumber});
+    alert('Timeline update was not saved. Browser storage may be full: '+err.message);
+  }
+};
 
 document.getElementById('addFindingBtn').onclick=()=>{if(!state.cases.length)return alert('Create a case first.');document.getElementById('findingEditor').classList.remove('hidden')}
 document.getElementById('cancelFindingBtn').onclick=()=>document.getElementById('findingEditor').classList.add('hidden');
@@ -375,8 +631,11 @@ function renderTimeline(){
     '<tr><td class="small">'+esc(showTimelineTime(t.time))+'</td>'+
     '<td class="case-id">'+esc(caseById(t.caseId)?.caseNumber||'')+'</td>'+
     '<td>'+esc(t.type)+'</td><td>'+esc(t.source)+'</td>'+
-    '<td>'+timelineSummaryHTML(t)+'</td></tr>'
-  ).join('') || '<tr><td colspan="5">No readable timeline events. Reimport the original .xlsx workbook to generate valid network-flow records.</td></tr>';
+    '<td>'+timelineSummaryHTML(t)+'</td>'+
+    '<td class="small">'+esc(t.derivedEvidenceNumber||
+      state.evidence.find(e=>e.id===t.evidenceId)?.evidenceNumber||'—')+
+    (t.connectionId?'<div class="badge">Derived connection</div>':'')+'</td></tr>'
+  ).join('') || '<tr><td colspan="6">No readable timeline events. Import NetFlow/PCAP and select relevant connections in Connections Explorer to add them here.</td></tr>';
 }
 document.getElementById('timelineCaseFilter').onchange=renderTimeline;
 document.getElementById('timelineSearch').oninput=renderTimeline;
@@ -427,24 +686,38 @@ function reportClean(t) {
   return true;
 }
 function fmtInt(n){return n.toLocaleString('en-US')}
-function trafficAnalysis(events){
-  const flows=events.filter(t=>t.flow&&(t.flow.src||t.flow.dst)), out=[];
-  if(!flows.length)return ['No structured network-flow records are available. Import an XLSX or CSV export with source and destination IP fields.',''];
-  const source=new Map(), destination=new Map(), ports=new Map(), protocols=new Map(), countries=new Map();
-  let totalBytes=0,knownBytes=0,earliest='',latest='';
-  const increment=(map,key)=>{if(key)map.set(key,(map.get(key)||0)+1)};
-  for(const t of flows){
-    const f=t.flow;
-    increment(source,f.src);increment(destination,f.dst);increment(ports,f.dstPort);increment(protocols,f.protocol);increment(countries,f.country);
-    if(f.bytes!==null&&Number.isFinite(f.bytes)){totalBytes+=f.bytes;knownBytes++}
-    if(t.time && !Number.isNaN(Date.parse(t.time))){const tm=new Date(t.time).toISOString();if(!earliest||tm<earliest)earliest=tm;if(!latest||tm>latest)latest=tm}
+function trafficAnalysis(events, connections){
+  const out=[];
+  if(!connections.length)return ['No indexed connections available. Ingest NetFlow CSV/XLSX or a supported PCAP/PCAPNG file from Evidence.',''];
+  const sources=new Map(),destinations=new Map(),ports=new Map(),protocols=new Map(),countries=new Map();
+  const counter=(map,key,amount=1)=>{if(key)map.set(key,(map.get(key)||0)+amount)};
+  let totalBytes=0,knownBytes=0,earliest='',latest='',packetCount=0,knownPackets=0,recordCount=0;
+  for(const c of connections){
+    counter(sources,c.src,c.records);counter(destinations,c.dst,c.records);
+    counter(ports,c.dstPort,c.records);counter(protocols,c.protocol,c.records);counter(countries,c.country,c.records);
+    recordCount+=c.records;
+    if(c.bytes!==null&&Number.isFinite(c.bytes)){totalBytes+=c.bytes;knownBytes++}
+    if(c.packets!==null&&Number.isFinite(c.packets)){packetCount+=c.packets;knownPackets++}
+    if(c.firstSeen&&(!earliest||c.firstSeen<earliest))earliest=c.firstSeen;
+    if(c.lastSeen&&(!latest||c.lastSeen>latest))latest=c.lastSeen;
   }
-  out.push('Parsed network-flow records: **'+fmtInt(flows.length)+'**');
-  if(earliest)out.push('Observed timestamps: **'+earliest+'** through **'+latest+'** (as provided by source data).');
-  if(knownBytes)out.push('Sum of reported byte counts: **'+fmtInt(totalBytes)+' bytes** across **'+fmtInt(knownBytes)+'** records with a recognized total-byte field. Direction and uniqueness are not independently validated.');
-  const top=(label,map)=>{if(!map.size)return;out.push('','### '+label,'','| Value | Flows |','|---|---:|');for(const [k,v] of [...map].sort((a,b)=>b[1]-a[1]).slice(0,10))out.push('| '+String(k).replaceAll('|','/')+' | '+fmtInt(v)+' |')};
-  top('Top source addresses',source);top('Top destination addresses',destination);top('Destination ports',ports);top('Protocols',protocols);top('Reported destination countries',countries);
-  out.push('','**Assessment:** These are observed flow records, not proof of malicious activity or exfiltration. Confirm IP ownership, public/private routing, flow direction, timestamps, and byte-count semantics before drawing conclusions.','');
+  const promoted=connections.filter(c=>c.promotedAt).length;
+  out.push('**Indexed directional connections:** '+fmtInt(connections.length));
+  out.push('**Source rows/packets aggregated:** '+fmtInt(recordCount));
+  out.push('**Analyst-selected connections added to timeline:** '+fmtInt(promoted));
+  if(earliest)out.push('**Observed range (UTC):** '+earliest+' to '+latest);
+  if(knownBytes)out.push('**Aggregate byte counts:** '+fmtInt(totalBytes)+' across '+knownBytes+' connections with known values. PCAP uses captured frame lengths; NetFlow uses reported exporter metrics. Do not interpret this sum as confirmed exfiltration.');
+  if(knownPackets)out.push('**Packet counts:** '+fmtInt(packetCount)+' across '+knownPackets+' connections with known values.');
+  const top=(label,map)=>{
+    if(!map.size)return;
+    out.push('','### '+label,'','| Value | Source records/packets |','|---|---:|');
+    for(const [key,n] of [...map].sort((a,b)=>b[1]-a[1]).slice(0,10))
+      out.push('| '+String(key).replaceAll('|','/')+' | '+fmtInt(n)+' |');
+  };
+  top('Source IP addresses',sources);top('Destination IP addresses',destinations);
+  top('Destination ports',ports);top('Protocols',protocols);
+  top('Exporter-reported destination countries',countries);
+  out.push('','**Caution:** A directional five-tuple is not proof of a completed session, malicious traffic, or data exfiltration. IP geolocation is not inferred from PCAP. Verify endpoint ownership, exporter semantics, time basis, and investigation context.','');
   return out;
 }
 function buildReport(cid){
@@ -460,9 +733,27 @@ function buildReport(cid){
       `- Collector: ${e.collector||'Not specified'}`,
       `- Parser: ${legacy?'Invalid legacy XLSX (original read as text)':e.parser}`,
       `- Parsed records: ${legacy?'Not usable':e.parsedRecords}`,
+      `- Indexed directional connections: ${e.connectionCount||0}`,
+      `- Import warning: ${e.importWarning||'None'}`,
       `- Notes: ${e.notes||''}`,'');
   });
-  out.push('## Network Traffic Analysis','',...trafficAnalysis(all),'## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
+  const indexed=state.connections.filter(x=>x.caseId===cid);
+  out.push('## Network Traffic Analysis','',...trafficAnalysis(all,indexed),
+    '## Analyst-Selected Connection Evidence','');
+  const selected=indexed.filter(x=>x.promotedAt);
+  if(!selected.length)out.push('No connections have been selected for the timeline. The connection index is available in Connections Explorer.','');
+  for(const conn of selected){
+    const e=ev.find(item=>item.id===conn.evidenceId);
+    out.push('### '+derivedReferenceFor(conn,e||{id:'',evidenceNumber:'Unknown'})+' — '+conn.protocol+' '+conn.src+' to '+conn.dst,
+      '- Parent evidence number: '+(e?.evidenceNumber||'Unavailable'),
+      '- Original evidence: '+(e?.filename||'Unavailable'),
+      '- Original SHA-256: '+(e?.sha256||'Unavailable'),
+      '- First observed (UTC): '+(conn.firstSeen||'Unknown'),
+      '- Last observed (UTC): '+(conn.lastSeen||'Unknown'),
+      '- Summary: '+connectionDescription(conn),
+      '- Analyst rationale: '+(conn.promotionNote||'Not specified'),'');
+  }
+  out.push('## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
   out.push('## Selected Timeline Records','', 'Displaying '+tl.length+' of '+all.length+' readable records; use the Timeline tab for searching.','','| Time | Type | Source | Summary |','|---|---|---|---|');tl.forEach(t=>out.push(`| ${t.time||'Unknown'} | ${String(t.type||'').replaceAll('|','\\|')} | ${String(t.source||'').replaceAll('|','\\|')} | ${String(t.summary||'').replaceAll('|','\\|')} |`));
   if(legacyXlsxEvidence(cid).length)out.push('','## Import Quality Warning','','One or more legacy XLSX imports were incorrectly read as binary text. Invalid records are excluded from analysis. Evidence metadata and hashes are retained; reimport the original workbook into this case to obtain valid rows. Do not reset the case.');
   out.push('','## Methodology and Integrity','','Evidence metadata includes SHA-256 hashes calculated in the browser over the original selected file bytes. In this prototype, the file itself is not persisted; only metadata and normalized records are stored in localStorage.','','## Limitations','','This browser build is for rapid prototyping only and is not a production evidence repository or HIPAA-compliant deployment.');
@@ -539,7 +830,7 @@ document.getElementById('importStateBtn').onclick=()=>document.getElementById('i
 document.getElementById('importStateFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const x=JSON.parse(await f.text());if(!x.cases||!x.evidence||!x.findings||!x.timeline)throw new Error('Invalid format');Object.assign(state,x);activeCaseId=state.cases[0]?.id||null;save()}catch(err){alert('Import failed: '+err.message)}};
 document.getElementById('resetBtn').onclick=()=>{if(confirm('Erase all prototype data in this browser?')){localStorage.removeItem(KEY);location.reload()}};
 
-function renderAll(){renderCaseOptions();renderCases();renderEvidence();renderFindings();renderTimeline();renderReport()}
+function renderAll(){renderCaseOptions();renderCases();renderEvidence();renderDerivedEvidence();renderFindings();renderConnections();renderTimeline();renderReport()}
 renderAll();
 </script>
 </body>
