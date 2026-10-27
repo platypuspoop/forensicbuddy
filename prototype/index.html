@@ -252,7 +252,7 @@ document.getElementById('timelineCaseFilter').onchange=renderTimeline;document.g
 
 function reportClean(t) {
   if(!t || !t.summary)return false;
-  if(/^(line=)?PK[^a-z0-9]/i.test(t.summary) || /\\\[Content_Types\\\]\.xml/i.test(t.summary))return false;
+  if(/^line=PK/i.test(t.summary) || t.summary.includes('[Content_Types].xml'))return false;
   if(t.type==='Generic text' && /[\uFFFD\u0000-\u001f]/.test(t.summary))return false;
   return true;
 }
@@ -279,7 +279,7 @@ function trafficAnalysis(events){
 }
 function buildReport(cid){
   const c=caseById(cid);if(!c)return 'Select a case.';
-  const ev=state.evidence.filter(e=>e.caseId===cid), fi=state.findings.filter(f=>f.caseId===cid), all=state.timeline.filter(t=>t.caseId===cid&&reportClean(t)), tl=all.slice(0,200);
+  const ev=state.evidence.filter(e=>e.caseId===cid), fi=state.findings.filter(f=>f.caseId===cid), badIds=new Set(ev.filter(e=>e.parser==='Generic text'&&/\.xlsx$/i.test(e.filename)).map(e=>e.id)), all=state.timeline.filter(t=>t.caseId===cid&&!badIds.has(t.evidenceId)&&reportClean(t)), tl=all.slice(0,200);
   const out=[`# Investigation Report - ${c.caseNumber}`,'',`**Title:** ${c.title}`,`**Classification:** ${c.classification}`,`**Status:** ${c.status}`,`**Lead Investigator:** ${c.lead||'Unassigned'}`,`**Generated:** ${now()}`,'','## Scope and Background','',c.description||'No scope narrative entered.','','## Evidence',''];
   ev.forEach(e=>out.push(`### ${e.evidenceNumber} - ${e.filename}`,`- SHA-256: \`${e.sha256}\``,`- Size: ${e.size} bytes`,`- Source tool: ${e.sourceTool||'Not specified'}`,`- Source system: ${e.sourceSystem||'Not specified'}`,`- Collector: ${e.collector||'Not specified'}`,`- Parser: ${e.parser}`,`- Parsed records: ${e.parsedRecords}`,`- Notes: ${e.notes||''}`,''));
   out.push('## Network Traffic Analysis','',...trafficAnalysis(all),'## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
