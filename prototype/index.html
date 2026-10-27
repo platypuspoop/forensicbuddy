@@ -654,24 +654,38 @@ function reportClean(t) {
   return true;
 }
 function fmtInt(n){return n.toLocaleString('en-US')}
-function trafficAnalysis(events){
-  const flows=events.filter(t=>t.flow&&(t.flow.src||t.flow.dst)), out=[];
-  if(!flows.length)return ['No structured network-flow records are available. Import an XLSX or CSV export with source and destination IP fields.',''];
-  const source=new Map(), destination=new Map(), ports=new Map(), protocols=new Map(), countries=new Map();
-  let totalBytes=0,knownBytes=0,earliest='',latest='';
-  const increment=(map,key)=>{if(key)map.set(key,(map.get(key)||0)+1)};
-  for(const t of flows){
-    const f=t.flow;
-    increment(source,f.src);increment(destination,f.dst);increment(ports,f.dstPort);increment(protocols,f.protocol);increment(countries,f.country);
-    if(f.bytes!==null&&Number.isFinite(f.bytes)){totalBytes+=f.bytes;knownBytes++}
-    if(t.time && !Number.isNaN(Date.parse(t.time))){const tm=new Date(t.time).toISOString();if(!earliest||tm<earliest)earliest=tm;if(!latest||tm>latest)latest=tm}
+function trafficAnalysis(events, connections){
+  const out=[];
+  if(!connections.length)return ['No indexed connections available. Ingest NetFlow CSV/XLSX or a supported PCAP/PCAPNG file from Evidence.',''];
+  const sources=new Map(),destinations=new Map(),ports=new Map(),protocols=new Map(),countries=new Map();
+  const counter=(map,key,amount=1)=>{if(key)map.set(key,(map.get(key)||0)+amount)};
+  let totalBytes=0,knownBytes=0,earliest='',latest='',packetCount=0,knownPackets=0,recordCount=0;
+  for(const c of connections){
+    counter(sources,c.src,c.records);counter(destinations,c.dst,c.records);
+    counter(ports,c.dstPort,c.records);counter(protocols,c.protocol,c.records);counter(countries,c.country,c.records);
+    recordCount+=c.records;
+    if(c.bytes!==null&&Number.isFinite(c.bytes)){totalBytes+=c.bytes;knownBytes++}
+    if(c.packets!==null&&Number.isFinite(c.packets)){packetCount+=c.packets;knownPackets++}
+    if(c.firstSeen&&(!earliest||c.firstSeen<earliest))earliest=c.firstSeen;
+    if(c.lastSeen&&(!latest||c.lastSeen>latest))latest=c.lastSeen;
   }
-  out.push('Parsed network-flow records: **'+fmtInt(flows.length)+'**');
-  if(earliest)out.push('Observed timestamps: **'+earliest+'** through **'+latest+'** (as provided by source data).');
-  if(knownBytes)out.push('Sum of reported byte counts: **'+fmtInt(totalBytes)+' bytes** across **'+fmtInt(knownBytes)+'** records with a recognized total-byte field. Direction and uniqueness are not independently validated.');
-  const top=(label,map)=>{if(!map.size)return;out.push('','### '+label,'','| Value | Flows |','|---|---:|');for(const [k,v] of [...map].sort((a,b)=>b[1]-a[1]).slice(0,10))out.push('| '+String(k).replaceAll('|','/')+' | '+fmtInt(v)+' |')};
-  top('Top source addresses',source);top('Top destination addresses',destination);top('Destination ports',ports);top('Protocols',protocols);top('Reported destination countries',countries);
-  out.push('','**Assessment:** These are observed flow records, not proof of malicious activity or exfiltration. Confirm IP ownership, public/private routing, flow direction, timestamps, and byte-count semantics before drawing conclusions.','');
+  const promoted=connections.filter(c=>c.promotedAt).length;
+  out.push('**Indexed directional connections:** '+fmtInt(connections.length));
+  out.push('**Source rows/packets aggregated:** '+fmtInt(recordCount));
+  out.push('**Analyst-selected connections added to timeline:** '+fmtInt(promoted));
+  if(earliest)out.push('**Observed range (UTC):** '+earliest+' to '+latest);
+  if(knownBytes)out.push('**Aggregate byte counts:** '+fmtInt(totalBytes)+' across '+knownBytes+' connections with known values. PCAP uses captured frame lengths; NetFlow uses reported exporter metrics. Do not interpret this sum as confirmed exfiltration.');
+  if(knownPackets)out.push('**Packet counts:** '+fmtInt(packetCount)+' across '+knownPackets+' connections with known values.');
+  const top=(label,map)=>{
+    if(!map.size)return;
+    out.push('','### '+label,'','| Value | Source records/packets |','|---|---:|');
+    for(const [key,n] of [...map].sort((a,b)=>b[1]-a[1]).slice(0,10))
+      out.push('| '+String(key).replaceAll('|','/')+' | '+fmtInt(n)+' |');
+  };
+  top('Source IP addresses',sources);top('Destination IP addresses',destinations);
+  top('Destination ports',ports);top('Protocols',protocols);
+  top('Exporter-reported destination countries',countries);
+  out.push('','**Caution:** A directional five-tuple is not proof of a completed session, malicious traffic, or data exfiltration. IP geolocation is not inferred from PCAP. Verify endpoint ownership, exporter semantics, time basis, and investigation context.','');
   return out;
 }
 function buildReport(cid){
@@ -687,9 +701,26 @@ function buildReport(cid){
       `- Collector: ${e.collector||'Not specified'}`,
       `- Parser: ${legacy?'Invalid legacy XLSX (original read as text)':e.parser}`,
       `- Parsed records: ${legacy?'Not usable':e.parsedRecords}`,
+      `- Indexed directional connections: ${e.connectionCount||0}`,
+      `- Import warning: ${e.importWarning||'None'}`,
       `- Notes: ${e.notes||''}`,'');
   });
-  out.push('## Network Traffic Analysis','',...trafficAnalysis(all),'## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
+  const indexed=state.connections.filter(x=>x.caseId===cid);
+  out.push('## Network Traffic Analysis','',...trafficAnalysis(all,indexed),
+    '## Analyst-Selected Connection Evidence','');
+  const selected=indexed.filter(x=>x.promotedAt);
+  if(!selected.length)out.push('No connections have been selected for the timeline. The connection index is available in Connections Explorer.','');
+  for(const conn of selected){
+    const e=ev.find(item=>item.id===conn.evidenceId);
+    out.push('### '+(e?.evidenceNumber||'Unknown')+' — '+conn.protocol+' '+conn.src+' to '+conn.dst,
+      '- Original evidence: '+(e?.filename||'Unavailable'),
+      '- Original SHA-256: '+(e?.sha256||'Unavailable'),
+      '- First observed (UTC): '+(conn.firstSeen||'Unknown'),
+      '- Last observed (UTC): '+(conn.lastSeen||'Unknown'),
+      '- Summary: '+connectionDescription(conn),
+      '- Analyst rationale: '+(conn.promotionNote||'Not specified'),'');
+  }
+  out.push('## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
   out.push('## Selected Timeline Records','', 'Displaying '+tl.length+' of '+all.length+' readable records; use the Timeline tab for searching.','','| Time | Type | Source | Summary |','|---|---|---|---|');tl.forEach(t=>out.push(`| ${t.time||'Unknown'} | ${String(t.type||'').replaceAll('|','\\|')} | ${String(t.source||'').replaceAll('|','\\|')} | ${String(t.summary||'').replaceAll('|','\\|')} |`));
   if(legacyXlsxEvidence(cid).length)out.push('','## Import Quality Warning','','One or more legacy XLSX imports were incorrectly read as binary text. Invalid records are excluded from analysis. Evidence metadata and hashes are retained; reimport the original workbook into this case to obtain valid rows. Do not reset the case.');
   out.push('','## Methodology and Integrity','','Evidence metadata includes SHA-256 hashes calculated in the browser over the original selected file bytes. In this prototype, the file itself is not persisted; only metadata and normalized records are stored in localStorage.','','## Limitations','','This browser build is for rapid prototyping only and is not a production evidence repository or HIPAA-compliant deployment.');
