@@ -23,6 +23,29 @@ table{width:100%;border-collapse:collapse;background:#fff}th,td{border-bottom:1p
 pre{white-space:pre-wrap;word-break:break-word;background:#f8fafc;border:1px solid var(--line);padding:12px;border-radius:5px}
 .badge{display:inline-block;padding:2px 7px;border-radius:12px;background:#e7ecf2;font-size:12px}
 h1,h2,h3{margin-top:0}
+.timeline-scroll{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:6px}
+.timeline-table{table-layout:fixed;min-width:780px}
+.timeline-table td{overflow-wrap:anywhere;word-break:normal;white-space:normal;line-height:1.5}
+.timeline-table th{white-space:nowrap}
+.timeline-table .case-id{overflow-wrap:normal;word-break:normal;white-space:nowrap}
+.timeline-table details summary{cursor:pointer;font-size:12px;font-weight:700;color:#344054;margin-top:5px}
+.timeline-table details p{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0;font-size:12px}
+.timeline-table tbody tr:hover{background:#f7f9fb}
+.data-quality{border:1px solid #e4c75f;background:#fff9e8;border-radius:6px;padding:12px;margin-bottom:12px}
+.data-quality p{margin:6px 0}
+.timeline-meta{margin-bottom:10px;color:var(--muted);font-size:13px}
+.import-warning{color:#864a13;font-size:12px;font-weight:700}
+.small{overflow-wrap:anywhere}
+.report-preview{padding:22px 26px;background:#fff;border:1px solid var(--line);border-radius:6px;line-height:1.55;overflow-wrap:anywhere}
+.report-preview h1{font-size:23px;margin:0 0 16px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.report-preview h2{font-size:18px;margin:26px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+.report-preview h3{font-size:15px;margin:18px 0 8px}
+.report-preview p{margin:8px 0}
+.report-preview ul{margin:8px 0 16px;padding-left:22px}
+.report-preview table{font-size:13px;margin:10px 0 18px;table-layout:fixed}
+.report-preview th,.report-preview td{overflow-wrap:anywhere}
+.report-preview code{font-family:Consolas,monospace;overflow-wrap:anywhere;font-size:12px}
+
 </style>
 </head>
 <body>
@@ -102,12 +125,29 @@ h1,h2,h3{margin-top:0}
     <div><label>Case filter</label><select id="timelineCaseFilter"></select></div>
     <div><label>Search</label><input id="timelineSearch" placeholder="domain, IP, process, URL..."></div>
   </div></div>
-  <div class="card"><table><thead><tr><th>Time</th><th>Case</th><th>Type</th><th>Source</th><th>Summary</th></tr></thead><tbody id="timelineBody"></tbody></table></div>
+  <div id="timelineQualityBanner" class="data-quality hidden" role="note">
+    <strong>Legacy Excel import detected</strong>
+    <p id="timelineQualityText"></p>
+    <p class="small">These records were created when an .xlsx workbook was incorrectly read as binary text. They are excluded from the timeline and report. The original workbook must be reimported for analysis.</p>
+    <div class="actions">
+      <button id="backupLegacyBtn" class="secondary" type="button">Export backup JSON</button>
+      <button id="cleanLegacyBtn" class="danger" type="button">Remove invalid timeline records</button>
+    </div>
+  </div>
+  <div id="timelineStatus" role="status" class="timeline-meta"></div>
+  <div id="timelineCount" class="timeline-meta"></div>
+  <div class="card"><div class="timeline-scroll">
+    <table class="timeline-table">
+      <colgroup><col style="width:16%"><col style="width:13%"><col style="width:17%"><col style="width:16%"><col style="width:38%"></colgroup>
+      <thead><tr><th>Time (UTC)</th><th>Case</th><th>Type</th><th>Source</th><th>Summary</th></tr></thead>
+      <tbody id="timelineBody"></tbody>
+    </table>
+  </div></div>
 </section>
 
 <section id="tab-report" class="hidden">
   <div class="actions" style="justify-content:space-between"><h1>Report Builder</h1><div class="actions"><select id="reportCase"></select><button id="downloadReportBtn">Download Markdown</button></div></div>
-  <div class="card"><pre id="reportPreview">Select a case.</pre></div>
+  <div class="card"><div id="reportPreview" class="report-preview">Select a case.</div></div>
 </section>
 
 <div class="card small">
@@ -159,11 +199,16 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
 });
 
 function renderCaseOptions(){
-  const options=['<option value="">Select case</option>',...state.cases.map(c=>'<option value="'+c.id+'">'+esc(c.caseNumber)+' - '+esc(c.title)+'</option>')].join('');
-  ['evidenceCase','findingCase','timelineCaseFilter','reportCase'].forEach(x=>document.getElementById(x).innerHTML=options);
-  if(activeCaseId){
-    ['evidenceCase','findingCase','reportCase'].forEach(x=>document.getElementById(x).value=activeCaseId);
-  }
+  // Do not reset the investigator's case selections when the page re-renders.
+  const ids=['evidenceCase','findingCase','timelineCaseFilter','reportCase'];
+  const previous=Object.fromEntries(ids.map(id=>[id,document.getElementById(id).value]));
+  ids.forEach(id=>{
+    const element=document.getElementById(id);
+    const first=id==='timelineCaseFilter'?'All cases':'Select case';
+    element.innerHTML=['<option value="">'+first+'</option>',...state.cases.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.caseNumber)+' - '+esc(c.title)+'</option>')].join('');
+    const preferred=previous[id] || (id!=='timelineCaseFilter'?activeCaseId:'');
+    element.value=state.cases.some(c=>c.id===preferred)?preferred:'';
+  });
   refreshEvidenceNumber();
 }
 function renderCases(){
@@ -242,7 +287,7 @@ document.getElementById('saveEvidenceBtn').onclick=async()=>{
   saveButton.disabled=true;
   let hash,parsed;
   try{hash=await sha256(file);parsed=await parseFile(file)}
-  catch(err){alert('Import failed: '+err.message+'\\nNo timeline events were added.');saveButton.disabled=false;return}
+  catch(err){alert('Import failed: '+err.message+'\nNo timeline events were added.');saveButton.disabled=false;return}
   const sequence=nextEvidenceSequence(caseId),num=formatEvidenceNumber(sequence),eid=id();
   state.evidenceSequences=state.evidenceSequences||{};
   const previousSequence=state.evidenceSequences[caseId];
@@ -265,7 +310,10 @@ document.getElementById('saveEvidenceBtn').onclick=async()=>{
   }finally{saveButton.disabled=false}
 };
 function renderEvidence(){
-  document.getElementById('evidenceBody').innerHTML=state.evidence.map(e=>`<tr><td>${esc(caseById(e.caseId)?.caseNumber||'')}</td><td>${esc(e.evidenceNumber)}</td><td>${esc(e.filename)}<div class="small">${e.size} bytes</div></td><td>${esc(e.sourceTool)}<div class="small">${esc(e.sourceSystem)}</div></td><td class="small">${esc(e.sha256)}</td><td>${esc(e.parser)}</td><td>${e.parsedRecords}</td></tr>`).join('')||'<tr><td colspan="7">No evidence.</td></tr>'
+  document.getElementById('evidenceBody').innerHTML=state.evidence.map(e=>{
+    const legacy=legacyXlsxEvidence(e.caseId).some(x=>x.id===e.id);
+    return `<tr><td>${esc(caseById(e.caseId)?.caseNumber||'')}</td><td>${esc(e.evidenceNumber)}</td><td>${esc(e.filename)}<div class="small">${e.size} bytes</div></td><td>${esc(e.sourceTool)}<div class="small">${esc(e.sourceSystem)}</div></td><td class="small">${esc(e.sha256)}</td><td>${esc(e.parser)}${legacy?'<div class="import-warning">Invalid legacy XLSX import; reimport source file</div>':''}</td><td>${legacy?'Unusable':e.parsedRecords}</td></tr>`;
+  }).join('')||'<tr><td colspan="7">No evidence.</td></tr>'
 }
 
 document.getElementById('addFindingBtn').onclick=()=>{if(!state.cases.length)return alert('Create a case first.');document.getElementById('findingEditor').classList.remove('hidden')}
@@ -279,12 +327,98 @@ document.getElementById('saveFindingBtn').onclick=()=>{
 function renderFindings(){
   document.getElementById('findingsBody').innerHTML=state.findings.map(f=>`<tr><td>${esc(caseById(f.caseId)?.caseNumber||'')}</td><td>${esc(f.severity)}</td><td><strong>${esc(f.title)}</strong><div class="small">${esc(f.description.slice(0,220))}</div></td><td>${esc(f.confidence)}</td><td>${esc(f.evidenceRefs)}</td></tr>`).join('')||'<tr><td colspan="5">No findings.</td></tr>'
 }
-function renderTimeline(){
-  const cid=document.getElementById('timelineCaseFilter').value, q=document.getElementById('timelineSearch').value.toLowerCase();
-  const rows=state.timeline.filter(t=>(!cid||t.caseId===cid)&&(!q||JSON.stringify(t).toLowerCase().includes(q))).slice(0,2000);
-  document.getElementById('timelineBody').innerHTML=rows.map(t=>`<tr><td class="small">${esc(t.time||'Unknown')}</td><td>${esc(caseById(t.caseId)?.caseNumber||'')}</td><td>${esc(t.type)}</td><td>${esc(t.source)}</td><td>${esc(t.summary)}</td></tr>`).join('')||'<tr><td colspan="5">No matching timeline events.</td></tr>'
+function legacyXlsxEvidence(caseId=''){
+  return state.evidence.filter(e=>(!caseId||e.caseId===caseId) &&
+    /\.xlsx$/i.test(String(e.filename||'')) && e.parser==='Generic text');
 }
-document.getElementById('timelineCaseFilter').onchange=renderTimeline;document.getElementById('timelineSearch').oninput=renderTimeline;
+function legacyXlsxRows(caseId=''){
+  const ids=new Set(legacyXlsxEvidence(caseId).map(e=>e.id));
+  return state.timeline.filter(t=>ids.has(t.evidenceId) && (!caseId||t.caseId===caseId));
+}
+function showTimelineTime(value){
+  if(!value)return 'Unknown';
+  const d=new Date(value);
+  return Number.isNaN(d.getTime())?String(value):d.toISOString().replace('T',' ').replace(/\.\d{3}Z$/,' UTC');
+}
+function timelineSummaryHTML(t){
+  const s=String(t.summary||'');
+  if(s.length<=240)return esc(s);
+  return esc(s.slice(0,240))+'…<details><summary>Show full entry</summary><p>'+esc(s)+'</p></details>';
+}
+function renderTimeline(){
+  const cid=document.getElementById('timelineCaseFilter').value;
+  const q=document.getElementById('timelineSearch').value.toLowerCase().trim();
+  const broken=legacyXlsxEvidence(cid), brokenIds=new Set(broken.map(e=>e.id));
+  const affected=legacyXlsxRows(cid);
+  const qualityBanner=document.getElementById('timelineQualityBanner');
+  qualityBanner.classList.toggle('hidden',broken.length===0);
+  document.getElementById('timelineQualityText').textContent=
+    broken.length+' legacy workbook(s) and '+affected.length+' invalid event(s) identified.'+
+    ' Case and evidence metadata (including SHA-256 hashes) will be preserved.';
+  document.getElementById('cleanLegacyBtn').disabled=affected.length===0;
+  const visible=state.timeline.filter(t=>(!cid||t.caseId===cid) &&
+    !brokenIds.has(t.evidenceId) && reportClean(t) &&
+    (!q||JSON.stringify(t).toLowerCase().includes(q)));
+  // Unknown timestamps are at the end, with stable ordering for equal timestamps.
+  visible.sort((a,b)=>{
+    const av=Date.parse(a.time||''),bv=Date.parse(b.time||'');
+    if(Number.isNaN(av)&&Number.isNaN(bv))return 0;
+    if(Number.isNaN(av))return 1;
+    if(Number.isNaN(bv))return -1;
+    return av-bv;
+  });
+  const rows=visible.slice(0,500);
+  const note=affected.length?' ('+affected.length+' invalid legacy Excel event(s) excluded)':'';
+  document.getElementById('timelineCount').textContent=
+    'Showing '+rows.length+' of '+visible.length+' matching readable timeline events'+note+'.';
+  document.getElementById('timelineBody').innerHTML=rows.map(t=>
+    '<tr><td class="small">'+esc(showTimelineTime(t.time))+'</td>'+
+    '<td class="case-id">'+esc(caseById(t.caseId)?.caseNumber||'')+'</td>'+
+    '<td>'+esc(t.type)+'</td><td>'+esc(t.source)+'</td>'+
+    '<td>'+timelineSummaryHTML(t)+'</td></tr>'
+  ).join('') || '<tr><td colspan="5">No readable timeline events. Reimport the original .xlsx workbook to generate valid network-flow records.</td></tr>';
+}
+document.getElementById('timelineCaseFilter').onchange=renderTimeline;
+document.getElementById('timelineSearch').oninput=renderTimeline;
+document.getElementById('backupLegacyBtn').onclick=()=>document.getElementById('exportStateBtn').click();
+document.getElementById('cleanLegacyBtn').onclick=()=>{
+  const cid=document.getElementById('timelineCaseFilter').value;
+  const broken=legacyXlsxEvidence(cid);
+  const ids=new Set(broken.map(e=>e.id));
+  const affected=legacyXlsxRows(cid);
+  if(!affected.length)return;
+  const label=cid?(caseById(cid)?.caseNumber||'the selected case'):'all cases';
+  if(!confirm('Remove '+affected.length+' invalid timeline record(s) from '+label+'?\n\n'+
+    'This affects only rows linked to legacy .xlsx files parsed as generic text. '+
+    'Cases, findings, evidence numbers and SHA-256 metadata will be kept.\n\n'+
+    'This cannot be undone unless you exported a JSON backup.'))return;
+  const previousTimeline=state.timeline;
+  const previousMetadata=broken.map(e=>({
+    e,parsedRecords:e.parsedRecords,importWarning:e.importWarning,
+    removedLegacyRecords:e.removedLegacyRecords,legacyCleanupAt:e.legacyCleanupAt
+  }));
+  state.timeline=state.timeline.filter(t=>!ids.has(t.evidenceId));
+  broken.forEach(e=>{
+    e.removedLegacyRecords=(Number(e.removedLegacyRecords)||0)+affected.filter(t=>t.evidenceId===e.id).length;
+    e.parsedRecords=0;
+    e.legacyCleanupAt=now();
+    e.importWarning='Invalid timeline records from an old XLSX import removed; reimport the original workbook.';
+  });
+  try{
+    save();
+    document.getElementById('timelineStatus').textContent='Removed '+affected.length+
+      ' invalid timeline record(s). All case, finding and evidence metadata preserved.';
+  }catch(err){
+    state.timeline=previousTimeline;
+    for(const p of previousMetadata){
+      for(const key of ['parsedRecords','importWarning','removedLegacyRecords','legacyCleanupAt']){
+        if(p[key]===undefined)delete p.e[key];else p.e[key]=p[key];
+      }
+    }
+    renderTimeline();
+    alert('Cleanup failed. No records were intentionally removed. '+err.message);
+  }
+};
 
 function reportClean(t) {
   if(!t || !t.summary)return false;
@@ -317,14 +451,86 @@ function buildReport(cid){
   const c=caseById(cid);if(!c)return 'Select a case.';
   const ev=state.evidence.filter(e=>e.caseId===cid), fi=state.findings.filter(f=>f.caseId===cid), badIds=new Set(ev.filter(e=>e.parser==='Generic text'&&/\.xlsx$/i.test(e.filename)).map(e=>e.id)), all=state.timeline.filter(t=>t.caseId===cid&&!badIds.has(t.evidenceId)&&reportClean(t)), tl=all.slice(0,200);
   const out=[`# Investigation Report - ${c.caseNumber}`,'',`**Title:** ${c.title}`,`**Classification:** ${c.classification}`,`**Status:** ${c.status}`,`**Lead Investigator:** ${c.lead||'Unassigned'}`,`**Generated:** ${now()}`,'','## Scope and Background','',c.description||'No scope narrative entered.','','## Evidence',''];
-  ev.forEach(e=>out.push(`### ${e.evidenceNumber} - ${e.filename}`,`- SHA-256: \`${e.sha256}\``,`- Size: ${e.size} bytes`,`- Source tool: ${e.sourceTool||'Not specified'}`,`- Source system: ${e.sourceSystem||'Not specified'}`,`- Collector: ${e.collector||'Not specified'}`,`- Parser: ${e.parser}`,`- Parsed records: ${e.parsedRecords}`,`- Notes: ${e.notes||''}`,''));
+  ev.forEach(e=>{
+    const legacy=legacyXlsxEvidence(cid).some(x=>x.id===e.id);
+    out.push(`### ${e.evidenceNumber} - ${e.filename}`,
+      `- SHA-256: \`${e.sha256}\``,`- Size: ${e.size} bytes`,
+      `- Source tool: ${e.sourceTool||'Not specified'}`,
+      `- Source system: ${e.sourceSystem||'Not specified'}`,
+      `- Collector: ${e.collector||'Not specified'}`,
+      `- Parser: ${legacy?'Invalid legacy XLSX (original read as text)':e.parser}`,
+      `- Parsed records: ${legacy?'Not usable':e.parsedRecords}`,
+      `- Notes: ${e.notes||''}`,'');
+  });
   out.push('## Network Traffic Analysis','',...trafficAnalysis(all),'## Findings','');fi.forEach(f=>out.push(`### ${f.title}`,`- Severity: ${f.severity}`,`- Confidence: ${f.confidence}`,`- Evidence: ${f.evidenceRefs||'Not specified'}`,'',f.description,'',`**Impact:** ${f.impact||'Not specified'}`,'',`**Recommendation:** ${f.recommendation||'Not specified'}`,''));
   out.push('## Selected Timeline Records','', 'Displaying '+tl.length+' of '+all.length+' readable records; use the Timeline tab for searching.','','| Time | Type | Source | Summary |','|---|---|---|---|');tl.forEach(t=>out.push(`| ${t.time||'Unknown'} | ${String(t.type||'').replaceAll('|','\\|')} | ${String(t.source||'').replaceAll('|','\\|')} | ${String(t.summary||'').replaceAll('|','\\|')} |`));
-  if(ev.some(e=>e.parser==='Generic text'&&/\.xlsx$/i.test(e.filename)))out.push('','## Import Quality Warning','','An earlier .xlsx upload was treated as raw text and was excluded from this report. Re-import the workbook after removing the old evidence entry through a case reset or a fresh case.');
+  if(legacyXlsxEvidence(cid).length)out.push('','## Import Quality Warning','','One or more legacy XLSX imports were incorrectly read as binary text. Invalid records are excluded from analysis. Evidence metadata and hashes are retained; reimport the original workbook into this case to obtain valid rows. Do not reset the case.');
   out.push('','## Methodology and Integrity','','Evidence metadata includes SHA-256 hashes calculated in the browser over the original selected file bytes. In this prototype, the file itself is not persisted; only metadata and normalized records are stored in localStorage.','','## Limitations','','This browser build is for rapid prototyping only and is not a production evidence repository or HIPAA-compliant deployment.');
   return out.join('\n')
 }
-function renderReport(){const cid=document.getElementById('reportCase').value||activeCaseId||'';document.getElementById('reportCase').value=cid;document.getElementById('reportPreview').textContent=buildReport(cid)}
+function reportInline(source){
+  // User-controlled content is escaped before adding a small safe set of tags.
+  return esc(source).replace(/\x60([^\x60]+)\x60/g,'<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+}
+function markdownCells(line){
+  const cells=[];let cell='';
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='\\'&&line[i+1]==='|'){cell+='|';i++;continue}
+    if(ch==='|'){cells.push(cell.trim());cell='';continue}
+    cell+=ch;
+  }
+  cells.push(cell.trim());
+  if(line.startsWith('|'))cells.shift();
+  if(line.endsWith('|'))cells.pop();
+  return cells;
+}
+function reportHtml(markdown){
+  const lines=String(markdown).split(/\r?\n/);
+  const output=[];
+  let i=0;
+  while(i<lines.length){
+    const line=lines[i], trimmed=line.trim();
+    if(!trimmed){i++;continue}
+    const heading=/^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if(heading){
+      const level=heading[1].length;
+      output.push('<h'+level+'>'+reportInline(heading[2])+'</h'+level+'>');
+      i++;continue;
+    }
+    if(trimmed.startsWith('|')&&i+1<lines.length&&/^\|[\s:|-]+\|$/.test(lines[i+1].trim())){
+      const headers=markdownCells(trimmed), cols=headers.length;
+      output.push('<div style="overflow-x:auto"><table><thead><tr>'+
+        headers.map(v=>'<th>'+reportInline(v)+'</th>').join('')+'</tr></thead><tbody>');
+      i+=2;
+      while(i<lines.length&&lines[i].trim().startsWith('|')){
+        const cells=markdownCells(lines[i].trim());
+        output.push('<tr>'+Array.from({length:cols},(_,k)=>'<td>'+reportInline(cells[k]||'')+'</td>').join('')+'</tr>');
+        i++;
+      }
+      output.push('</tbody></table></div>');
+      continue;
+    }
+    if(trimmed.startsWith('- ')){
+      output.push('<ul>');
+      while(i<lines.length&&lines[i].trim().startsWith('- ')){
+        output.push('<li>'+reportInline(lines[i].trim().slice(2))+'</li>');
+        i++;
+      }
+      output.push('</ul>');
+      continue;
+    }
+    output.push('<p>'+reportInline(trimmed)+'</p>');
+    i++;
+  }
+  return output.join('');
+}
+function renderReport(){
+  const cid=document.getElementById('reportCase').value||activeCaseId||'';
+  document.getElementById('reportCase').value=cid;
+  document.getElementById('reportPreview').innerHTML=reportHtml(buildReport(cid));
+}
 document.getElementById('reportCase').onchange=renderReport;
 document.getElementById('downloadReportBtn').onclick=()=>{const cid=document.getElementById('reportCase').value;if(!cid)return alert('Select a case.');const blob=new Blob([buildReport(cid)],{type:'text/markdown'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(caseById(cid)?.caseNumber||'forensicbuddy')+'_report.md';a.click();URL.revokeObjectURL(a.href)};
 
