@@ -359,7 +359,7 @@ document.getElementById('saveEvidenceBtn').onclick=async()=>{
   const previousTimelineSize=state.timeline.length;
   const previousConnectionSize=state.connections.length;
   state.evidenceSequences[caseId]=sequence;
-  state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.records.length,100000),importWarning:[parsed.warning,derived.warning].filter(Boolean).join(' '),connectionCount:derived.connections.length,createdAt:now()});
+  state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.parsedRecords??(parsed.records||[]).length,100000),importWarning:[parsed.warning,derived.warning].filter(Boolean).join(' '),connectionCount:derived.connections.length,createdAt:now()});
   if(networkFormat){
     for(const conn of derived.connections)state.connections.push({...conn,id:id(),caseId,evidenceId:eid,promotedAt:""});
   }else{
