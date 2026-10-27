@@ -66,7 +66,7 @@ h1,h2,h3{margin-top:0}
     <h2>Add evidence</h2>
     <div class="grid">
       <div><label>Case</label><select id="evidenceCase"></select></div>
-      <div><label>Evidence number</label><input id="evidenceNumber" placeholder="E-0001"></div>
+      <div><label>Evidence number (automatic)</label><input id="evidenceNumber" value="E-0001" readonly aria-readonly="true"><div class="small">Assigned when evidence is ingested. Sequential within each case.</div></div>
       <div><label>File</label><input id="evidenceFile" type="file"></div>
       <div><label>Source tool</label><input id="evidenceTool" placeholder="Zeek, tshark, KAPE, XSIAM..."></div>
       <div><label>Source system</label><input id="evidenceSystem"></div>
@@ -133,6 +133,20 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&l
 function now(){return new Date().toISOString()}
 function caseById(x){return state.cases.find(c=>c.id===x)}
 function countEvidence(cid){return state.evidence.filter(e=>e.caseId===cid).length}
+function nextEvidenceSequence(caseId){
+  if(!caseId)return 1;
+  const issued=Number(state.evidenceSequences?.[caseId]||0);
+  const existing=state.evidence.filter(e=>e.caseId===caseId).reduce((max,e)=>{
+    const match=/^E-(\d+)$/i.exec(String(e.evidenceNumber||''));
+    return match?Math.max(max,Number(match[1])):max;
+  },0);
+  return Math.max(Number.isSafeInteger(issued)&&issued>=0?issued:0,existing)+1;
+}
+function formatEvidenceNumber(sequence){return 'E-'+String(sequence).padStart(4,'0')}
+function refreshEvidenceNumber(){
+  const caseId=document.getElementById('evidenceCase').value;
+  document.getElementById('evidenceNumber').value=caseId?formatEvidenceNumber(nextEvidenceSequence(caseId)):'';
+}
 function countFindings(cid){return state.findings.filter(f=>f.caseId===cid).length}
 
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
@@ -150,6 +164,7 @@ function renderCaseOptions(){
   if(activeCaseId){
     ['evidenceCase','findingCase','reportCase'].forEach(x=>document.getElementById(x).value=activeCaseId);
   }
+  refreshEvidenceNumber();
 }
 function renderCases(){
   const b=document.getElementById('casesBody');
@@ -216,17 +231,38 @@ async function parseFile(file){
   return {parser:'Generic text',records:text.split(/\r?\n/).filter(Boolean).slice(0,100000).map(line=>({line}))}
 }
 
-document.getElementById('addEvidenceBtn').onclick=()=>{if(!state.cases.length)return alert('Create a case first.');document.getElementById('evidenceEditor').classList.remove('hidden')}
+document.getElementById('addEvidenceBtn').onclick=()=>{if(!state.cases.length)return alert('Create a case first.');refreshEvidenceNumber();document.getElementById('evidenceEditor').classList.remove('hidden')}
+document.getElementById('evidenceCase').onchange=refreshEvidenceNumber;
 document.getElementById('cancelEvidenceBtn').onclick=()=>document.getElementById('evidenceEditor').classList.add('hidden');
 document.getElementById('saveEvidenceBtn').onclick=async()=>{
   const caseId=document.getElementById('evidenceCase').value,file=document.getElementById('evidenceFile').files[0];
   if(!caseId||!file)return alert('Select a case and file.');
-  let num=document.getElementById('evidenceNumber').value.trim();
-  if(!num)num='E-'+String(state.evidence.filter(e=>e.caseId===caseId).length+1).padStart(4,'0');
-  let hash,parsed;try{hash=await sha256(file);parsed=await parseFile(file)}catch(err){alert('Import failed: '+err.message+'\nNo timeline events were added.');return}const eid=id();
+  const saveButton=document.getElementById('saveEvidenceBtn');
+  if(saveButton.disabled)return;
+  saveButton.disabled=true;
+  let hash,parsed;
+  try{hash=await sha256(file);parsed=await parseFile(file)}
+  catch(err){alert('Import failed: '+err.message+'\\nNo timeline events were added.');saveButton.disabled=false;return}
+  const sequence=nextEvidenceSequence(caseId),num=formatEvidenceNumber(sequence),eid=id();
+  state.evidenceSequences=state.evidenceSequences||{};
+  const previousSequence=state.evidenceSequences[caseId];
+  const previousTimelineSize=state.timeline.length;
+  state.evidenceSequences[caseId]=sequence;
   state.evidence.push({id:eid,caseId,evidenceNumber:num,filename:file.name,size:file.size,sha256:hash,sourceTool:document.getElementById('evidenceTool').value.trim(),sourceSystem:document.getElementById('evidenceSystem').value.trim(),collector:document.getElementById('evidenceCollector').value.trim(),notes:document.getElementById('evidenceNotes').value.trim(),parser:parsed.parser,parsedRecords:Math.min(parsed.records.length,100000),importWarning:parsed.warning||'',createdAt:now()});
   parsed.records.slice(0,15000).forEach(r=>{const facts=recordFacts(r);state.timeline.push({id:id(),caseId,evidenceId:eid,time:bestTime(r),type: facts.src||facts.dst ? 'Network flow' : (r.event_type||r.EventType||r._path||parsed.parser),source:facts.src||r.host||r.hostname||r.Computer||'',summary:summary(r),flow:facts})});
-  document.getElementById('evidenceEditor').classList.add('hidden');document.getElementById('evidenceFile').value='';try{save();if(parsed.warning)alert(parsed.warning)}catch(err){alert('Browser storage limit exceeded. Export state or reduce the number of rows. '+err.message)}
+  try{
+    save();
+    document.getElementById('evidenceEditor').classList.add('hidden');
+    document.getElementById('evidenceFile').value='';
+    if(parsed.warning)alert(parsed.warning);
+  }catch(err){
+    state.evidence.pop();
+    state.timeline.length=previousTimelineSize;
+    if(previousSequence===undefined)delete state.evidenceSequences[caseId];
+    else state.evidenceSequences[caseId]=previousSequence;
+    refreshEvidenceNumber();
+    alert('Evidence was not saved. Browser storage may be full: '+err.message);
+  }finally{saveButton.disabled=false}
 };
 function renderEvidence(){
   document.getElementById('evidenceBody').innerHTML=state.evidence.map(e=>`<tr><td>${esc(caseById(e.caseId)?.caseNumber||'')}</td><td>${esc(e.evidenceNumber)}</td><td>${esc(e.filename)}<div class="small">${e.size} bytes</div></td><td>${esc(e.sourceTool)}<div class="small">${esc(e.sourceSystem)}</div></td><td class="small">${esc(e.sha256)}</td><td>${esc(e.parser)}</td><td>${e.parsedRecords}</td></tr>`).join('')||'<tr><td colspan="7">No evidence.</td></tr>'
